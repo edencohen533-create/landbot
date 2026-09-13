@@ -454,3 +454,293 @@ create policy "analytics_events_public_insert" on public.analytics_events
   for insert with check (
     exists (select 1 from public.quizzes q where q.id = analytics_events.quiz_id and q.status = 'active')
   );
+
+-- ============================================================
+-- 7. Inbox module (מרכז שיחות) — fully additive, does not touch
+--    any table/policy/trigger defined above.
+-- ============================================================
+
+create table if not exists public.conversations (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  customer_name text not null,
+  customer_phone text,
+  customer_email text,
+  customer_avatar_url text,
+  channel text not null default 'webchat' check (channel in ('whatsapp', 'webchat', 'email', 'instagram', 'messenger')),
+  status text not null default 'open' check (status in ('open', 'pending', 'snoozed', 'closed')),
+  assigned_to uuid references auth.users(id) on delete set null,
+  tags text[] not null default '{}',
+  unread_count integer not null default 0,
+  last_message_at timestamptz not null default now(),
+  last_message_preview text,
+  is_demo boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists conversations_workspace_id_idx on public.conversations(workspace_id);
+create index if not exists conversations_last_message_at_idx on public.conversations(last_message_at desc);
+
+create table if not exists public.conversation_messages (
+  id uuid primary key default gen_random_uuid(),
+  conversation_id uuid not null references public.conversations(id) on delete cascade,
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  sender_type text not null check (sender_type in ('customer', 'agent', 'system')),
+  sender_id uuid references auth.users(id) on delete set null,
+  body text,
+  attachment_url text,
+  attachment_type text,
+  attachment_name text,
+  status text not null default 'sent' check (status in ('sent', 'delivered', 'read')),
+  is_demo boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists conversation_messages_conversation_id_idx on public.conversation_messages(conversation_id);
+create index if not exists conversation_messages_workspace_id_idx on public.conversation_messages(workspace_id);
+
+create table if not exists public.conversation_notes (
+  id uuid primary key default gen_random_uuid(),
+  conversation_id uuid not null references public.conversations(id) on delete cascade,
+  text text not null,
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists conversation_notes_conversation_id_idx on public.conversation_notes(conversation_id);
+
+create table if not exists public.quick_replies (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  label text not null,
+  body text not null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.inbox_settings (
+  workspace_id uuid primary key references public.workspaces(id) on delete cascade,
+  demo_live_enabled boolean not null default false,
+  updated_at timestamptz not null default now()
+);
+
+-- Keep conversations.last_message_at / preview / unread_count in sync whenever
+-- a message is inserted, so the list can just order by last_message_at.
+create or replace function public.on_conversation_message_insert()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.conversations
+  set
+    last_message_at = new.created_at,
+    last_message_preview = left(coalesce(new.body, case when new.attachment_url is not null then '📎 קובץ מצורף' else '' end), 140),
+    unread_count = case when new.sender_type = 'customer' then unread_count + 1 else unread_count end
+  where id = new.conversation_id;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_conversation_message_insert on public.conversation_messages;
+create trigger on_conversation_message_insert
+  after insert on public.conversation_messages
+  for each row execute function public.on_conversation_message_insert();
+
+alter table public.conversations enable row level security;
+alter table public.conversation_messages enable row level security;
+alter table public.conversation_notes enable row level security;
+alter table public.quick_replies enable row level security;
+alter table public.inbox_settings enable row level security;
+
+-- Everything here is an internal operator tool — owner-only, no public access.
+drop policy if exists "conversations_owner_all" on public.conversations;
+create policy "conversations_owner_all" on public.conversations
+  for all using (
+    exists (select 1 from public.workspaces w where w.id = conversations.workspace_id and w.owner_id = auth.uid())
+  ) with check (
+    exists (select 1 from public.workspaces w where w.id = conversations.workspace_id and w.owner_id = auth.uid())
+  );
+
+drop policy if exists "conversation_messages_owner_all" on public.conversation_messages;
+create policy "conversation_messages_owner_all" on public.conversation_messages
+  for all using (
+    exists (select 1 from public.workspaces w where w.id = conversation_messages.workspace_id and w.owner_id = auth.uid())
+  ) with check (
+    exists (select 1 from public.workspaces w where w.id = conversation_messages.workspace_id and w.owner_id = auth.uid())
+  );
+
+drop policy if exists "conversation_notes_owner_all" on public.conversation_notes;
+create policy "conversation_notes_owner_all" on public.conversation_notes
+  for all using (
+    exists (
+      select 1 from public.conversations c
+      join public.workspaces w on w.id = c.workspace_id
+      where c.id = conversation_notes.conversation_id and w.owner_id = auth.uid()
+    )
+  ) with check (
+    exists (
+      select 1 from public.conversations c
+      join public.workspaces w on w.id = c.workspace_id
+      where c.id = conversation_notes.conversation_id and w.owner_id = auth.uid()
+    )
+  );
+
+drop policy if exists "quick_replies_owner_all" on public.quick_replies;
+create policy "quick_replies_owner_all" on public.quick_replies
+  for all using (
+    exists (select 1 from public.workspaces w where w.id = quick_replies.workspace_id and w.owner_id = auth.uid())
+  ) with check (
+    exists (select 1 from public.workspaces w where w.id = quick_replies.workspace_id and w.owner_id = auth.uid())
+  );
+
+drop policy if exists "inbox_settings_owner_all" on public.inbox_settings;
+create policy "inbox_settings_owner_all" on public.inbox_settings
+  for all using (
+    exists (select 1 from public.workspaces w where w.id = inbox_settings.workspace_id and w.owner_id = auth.uid())
+  ) with check (
+    exists (select 1 from public.workspaces w where w.id = inbox_settings.workspace_id and w.owner_id = auth.uid())
+  );
+
+-- Turn on Realtime (Postgres change feed) for the two tables the Inbox UI
+-- needs to live-update on. Safe to re-run: skips if already added.
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'conversations'
+  ) then
+    alter publication supabase_realtime add table public.conversations;
+  end if;
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'conversation_messages'
+  ) then
+    alter publication supabase_realtime add table public.conversation_messages;
+  end if;
+end $$;
+
+-- ============================================================
+-- 8. Quiz tracking (Meta Pixel/CAPI + GTM) — additive only, does
+--    not touch any table/policy/trigger defined above.
+-- ============================================================
+
+-- Non-secret settings: safe for the owner's dashboard AND the public
+-- runtime (for an active quiz) to read directly.
+create table if not exists public.quiz_tracking_settings (
+  quiz_id uuid primary key references public.quizzes(id) on delete cascade,
+  meta_pixel_id text,
+  meta_has_token boolean not null default false,
+  meta_last_test_status text not null default 'untested' check (meta_last_test_status in ('untested', 'success', 'error')),
+  meta_last_test_error text,
+  meta_last_test_at timestamptz,
+  gtm_container_id text,
+  updated_at timestamptz not null default now()
+);
+
+-- The actual secret. RLS is enabled with NO policies at all below, so
+-- neither anon nor an authenticated owner can read/write it directly —
+-- only a server route using the service-role key can, which is the
+-- only place the Conversions API call is allowed to happen from.
+create table if not exists public.quiz_tracking_secrets (
+  quiz_id uuid primary key references public.quizzes(id) on delete cascade,
+  meta_access_token text not null,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.quiz_tracking_events (
+  id uuid primary key default gen_random_uuid(),
+  quiz_id uuid not null references public.quizzes(id) on delete cascade,
+  name text not null check (name in ('PageView', 'Lead', 'ViewContent', 'InitiateCheckout', 'Purchase', 'CompleteRegistration', 'Custom')),
+  custom_name text,
+  trigger_node_id text,
+  send_to_pixel boolean not null default true,
+  send_to_capi boolean not null default true,
+  send_to_gtm boolean not null default false,
+  condition_field text,
+  condition_operator text check (condition_operator in ('eq', 'neq', 'gt', 'gte', 'lt', 'lte')),
+  condition_value text,
+  value numeric,
+  currency text default 'ILS',
+  enabled boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists quiz_tracking_events_quiz_id_idx on public.quiz_tracking_events(quiz_id);
+
+create table if not exists public.quiz_tracking_activity (
+  id uuid primary key default gen_random_uuid(),
+  quiz_id uuid not null references public.quizzes(id) on delete cascade,
+  message text not null,
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists quiz_tracking_activity_quiz_id_idx on public.quiz_tracking_activity(quiz_id);
+
+alter table public.quiz_tracking_settings enable row level security;
+alter table public.quiz_tracking_secrets enable row level security;
+alter table public.quiz_tracking_events enable row level security;
+alter table public.quiz_tracking_activity enable row level security;
+
+drop policy if exists "quiz_tracking_settings_owner_all" on public.quiz_tracking_settings;
+create policy "quiz_tracking_settings_owner_all" on public.quiz_tracking_settings
+  for all using (
+    exists (
+      select 1 from public.quizzes q
+      join public.workspaces w on w.id = q.workspace_id
+      where q.id = quiz_tracking_settings.quiz_id and w.owner_id = auth.uid()
+    )
+  ) with check (
+    exists (
+      select 1 from public.quizzes q
+      join public.workspaces w on w.id = q.workspace_id
+      where q.id = quiz_tracking_settings.quiz_id and w.owner_id = auth.uid()
+    )
+  );
+drop policy if exists "quiz_tracking_settings_public_read_active" on public.quiz_tracking_settings;
+create policy "quiz_tracking_settings_public_read_active" on public.quiz_tracking_settings
+  for select using (
+    exists (select 1 from public.quizzes q where q.id = quiz_tracking_settings.quiz_id and q.status = 'active')
+  );
+
+-- quiz_tracking_secrets: deliberately NO policies — default-deny for
+-- every role. Only the service-role key (which bypasses RLS) can touch it.
+
+drop policy if exists "quiz_tracking_events_owner_all" on public.quiz_tracking_events;
+create policy "quiz_tracking_events_owner_all" on public.quiz_tracking_events
+  for all using (
+    exists (
+      select 1 from public.quizzes q
+      join public.workspaces w on w.id = q.workspace_id
+      where q.id = quiz_tracking_events.quiz_id and w.owner_id = auth.uid()
+    )
+  ) with check (
+    exists (
+      select 1 from public.quizzes q
+      join public.workspaces w on w.id = q.workspace_id
+      where q.id = quiz_tracking_events.quiz_id and w.owner_id = auth.uid()
+    )
+  );
+drop policy if exists "quiz_tracking_events_public_read_active" on public.quiz_tracking_events;
+create policy "quiz_tracking_events_public_read_active" on public.quiz_tracking_events
+  for select using (
+    exists (select 1 from public.quizzes q where q.id = quiz_tracking_events.quiz_id and q.status = 'active')
+  );
+
+drop policy if exists "quiz_tracking_activity_owner_all" on public.quiz_tracking_activity;
+create policy "quiz_tracking_activity_owner_all" on public.quiz_tracking_activity
+  for all using (
+    exists (
+      select 1 from public.quizzes q
+      join public.workspaces w on w.id = q.workspace_id
+      where q.id = quiz_tracking_activity.quiz_id and w.owner_id = auth.uid()
+    )
+  ) with check (
+    exists (
+      select 1 from public.quizzes q
+      join public.workspaces w on w.id = q.workspace_id
+      where q.id = quiz_tracking_activity.quiz_id and w.owner_id = auth.uid()
+    )
+  );

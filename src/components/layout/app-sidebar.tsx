@@ -12,6 +12,7 @@ import {
   Sun,
   Sparkles,
   LogOut,
+  MessagesSquare,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -22,6 +23,7 @@ import { createClient } from "@/lib/supabase/client";
 const NAV_ITEMS = [
   { href: "/", label: "לוח בקרה", icon: LayoutDashboard },
   { href: "/quizzes", label: "שאלונים", icon: ListChecks },
+  { href: "/inbox", label: "מרכז שיחות", icon: MessagesSquare },
   { href: "/leads", label: "לידים", icon: Users },
   { href: "/integrations", label: "אינטגרציות", icon: Plug },
   { href: "/settings", label: "הגדרות", icon: Settings },

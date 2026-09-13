@@ -8,6 +8,9 @@ import { getStartNode, resolveRenderable, isValidIsraeliPhone } from "@/lib/quiz
 import { createClient } from "@/lib/supabase/client";
 import { recordAnalyticsEvent, submitPublicQuizResponse } from "@/lib/supabase/queries";
 import { triggerIntegrations } from "@/lib/integrations";
+import { getTrackingSettings, listTrackingEvents } from "@/lib/supabase/tracking-queries";
+import { fireTrackingEvent } from "@/lib/tracking-runtime";
+import { QuizTrackingEvent, QuizTrackingSettings } from "@/lib/types";
 import { Checkbox } from "@/components/ui/checkbox";
 import { SunAvatar } from "@/components/runtime/sun-avatar";
 
@@ -67,8 +70,47 @@ export function QuizRunner({ quiz }: { quiz: Quiz }) {
   const [answers, setAnswers] = useState<Record<string, LeadAnswer>>({});
   const [leadInfo, setLeadInfo] = useState<LeadInfoState>({ name: "", phone: "", email: "", consent: false });
 
+  // Meta Pixel/CAPI + GTM tracking (separate from the quiz's own analytics/
+  // integrations calls above — additive, doesn't affect existing behavior).
+  const sessionIdRef = useRef<string>(crypto.randomUUID());
+  const trackingRef = useRef<{ settings: QuizTrackingSettings; events: QuizTrackingEvent[] } | null>(null);
+  const firedPageLoadRef = useRef(false);
+  const leadInfoRef = useRef(leadInfo);
+  useEffect(() => {
+    leadInfoRef.current = leadInfo;
+  }, [leadInfo]);
+
+  function fireEventsForTrigger(triggerKey: string | null, answerForScore?: LeadAnswer) {
+    const tracking = trackingRef.current;
+    if (!tracking) return;
+    const conditionContext: Record<string, string | number | undefined> = {};
+    if (answerForScore) conditionContext[answerForScore.nodeId] = answerForScore.answerLabel;
+    for (const ev of tracking.events) {
+      if (ev.triggerNodeId !== triggerKey) continue;
+      fireTrackingEvent(ev, {
+        sessionId: sessionIdRef.current,
+        quizId: quiz.id,
+        settings: tracking.settings,
+        phone: leadInfoRef.current.phone || undefined,
+        email: leadInfoRef.current.email || undefined,
+        conditionContext,
+      });
+    }
+  }
+
   useEffect(() => {
     recordAnalyticsEvent(supabase, quiz.id, "view", utmSource);
+    (async () => {
+      const [settings, events] = await Promise.all([
+        getTrackingSettings(supabase, quiz.id),
+        listTrackingEvents(supabase, quiz.id),
+      ]);
+      trackingRef.current = { settings, events };
+      if (!firedPageLoadRef.current) {
+        firedPageLoadRef.current = true;
+        fireEventsForTrigger(null);
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -130,12 +172,15 @@ export function QuizRunner({ quiz }: { quiz: Quiz }) {
       } else {
         setActiveNodeId(next.id);
       }
+      fireEventsForTrigger(next.id, answerForScore);
+      if (next.type === "end") fireEventsForTrigger("__end__", answerForScore);
     }, 650);
   }
 
   function handleComplete(node: QuizNode, userText: string, handle: string | null, answer?: LeadAnswer) {
     if (answer) setAnswers((a) => ({ ...a, [node.id]: answer }));
     setEntries((es) => [...es, { id: uid(), kind: "user", text: userText, ts: Date.now() }]);
+    if (node.data.kind === "lead_details") fireEventsForTrigger("__lead_details__");
     advanceTo(node.id, handle, answer);
   }
 

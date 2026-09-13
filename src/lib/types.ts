@@ -277,3 +277,135 @@ export interface AnalyticsPoint {
   completions: number;
   leads: number;
 }
+
+// ---------------- Inbox (מרכז שיחות) ----------------
+
+export type ConversationChannel = "whatsapp" | "webchat" | "email" | "instagram" | "messenger";
+export type ConversationStatus = "open" | "pending" | "snoozed" | "closed";
+export type MessageSenderType = "customer" | "agent" | "system";
+export type MessageStatus = "sent" | "delivered" | "read";
+
+export const CONVERSATION_STATUS_LABELS: Record<ConversationStatus, string> = {
+  open: "פתוחה",
+  pending: "ממתינה לתשובה",
+  snoozed: "מושהית",
+  closed: "נסגרה",
+};
+
+export const CHANNEL_LABELS: Record<ConversationChannel, string> = {
+  whatsapp: "WhatsApp",
+  webchat: "צ'אט אתר",
+  email: "אימייל",
+  instagram: "Instagram",
+  messenger: "Messenger",
+};
+
+export interface Conversation {
+  id: string;
+  workspaceId: string;
+  customerName: string;
+  customerPhone?: string;
+  customerEmail?: string;
+  customerAvatarUrl?: string;
+  channel: ConversationChannel;
+  status: ConversationStatus;
+  assignedTo?: string;
+  assignedToName?: string;
+  tags: string[];
+  unreadCount: number;
+  lastMessageAt: string;
+  lastMessagePreview?: string;
+  isDemo: boolean;
+  createdAt: string;
+}
+
+export interface ConversationMessage {
+  id: string;
+  conversationId: string;
+  senderType: MessageSenderType;
+  senderId?: string;
+  body?: string;
+  attachmentUrl?: string;
+  attachmentType?: string;
+  attachmentName?: string;
+  status: MessageStatus;
+  isDemo: boolean;
+  createdAt: string;
+}
+
+export interface ConversationNote {
+  id: string;
+  conversationId: string;
+  text: string;
+  createdAt: string;
+}
+
+export interface QuickReply {
+  id: string;
+  workspaceId: string;
+  label: string;
+  body: string;
+}
+
+// ---------------- Quiz tracking (Meta Pixel/CAPI + GTM) ----------------
+
+export type TrackingEventName =
+  | "PageView"
+  | "Lead"
+  | "ViewContent"
+  | "InitiateCheckout"
+  | "Purchase"
+  | "CompleteRegistration"
+  | "Custom";
+
+export const TRACKING_EVENT_LABELS: Record<TrackingEventName, string> = {
+  PageView: "PageView",
+  Lead: "Lead",
+  ViewContent: "ViewContent",
+  InitiateCheckout: "InitiateCheckout",
+  Purchase: "Purchase",
+  CompleteRegistration: "CompleteRegistration",
+  Custom: "מותאם אישית",
+};
+
+export type TrackingConnectionStatus = "untested" | "success" | "error";
+
+export interface QuizTrackingSettings {
+  quizId: string;
+  metaPixelId?: string;
+  metaHasToken: boolean;
+  metaLastTestStatus: TrackingConnectionStatus;
+  metaLastTestError?: string;
+  metaLastTestAt?: string;
+  gtmContainerId?: string;
+  updatedAt: string;
+}
+
+export interface TrackingCondition {
+  field: string;
+  operator: "eq" | "neq" | "gt" | "gte" | "lt" | "lte";
+  value: string;
+}
+
+export interface QuizTrackingEvent {
+  id: string;
+  quizId: string;
+  name: TrackingEventName;
+  customName?: string;
+  triggerNodeId: string | null;
+  sendToPixel: boolean;
+  sendToCapi: boolean;
+  sendToGtm: boolean;
+  condition?: TrackingCondition;
+  value?: number;
+  currency?: string;
+  enabled: boolean;
+  createdAt: string;
+}
+
+export interface QuizTrackingActivity {
+  id: string;
+  quizId: string;
+  message: string;
+  createdAt: string;
+}

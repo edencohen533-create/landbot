@@ -1,5 +1,5 @@
 import { Badge } from "@/components/ui/badge";
-import { LEAD_STATUS_LABELS, LeadStatus, QuizStatus } from "@/lib/types";
+import { CONVERSATION_STATUS_LABELS, ConversationStatus, LEAD_STATUS_LABELS, LeadStatus, QuizStatus } from "@/lib/types";
 
 const QUIZ_STATUS_LABEL: Record<QuizStatus, string> = {
   draft: "טיוטה",
@@ -38,4 +38,15 @@ const CATEGORY_CLASS = {
 
 export function CategoryBadge({ category }: { category: "hot" | "warm" | "cold" }) {
   return <Badge className={CATEGORY_CLASS[category]}>{CATEGORY_LABEL[category]}</Badge>;
+}
+
+const CONVERSATION_STATUS_CLASS: Record<ConversationStatus, string> = {
+  open: "bg-primary/15 text-primary border-transparent",
+  pending: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-transparent",
+  snoozed: "bg-violet-500/15 text-violet-600 dark:text-violet-400 border-transparent",
+  closed: "bg-muted text-muted-foreground border-transparent",
+};
+
+export function ConversationStatusBadge({ status }: { status: ConversationStatus }) {
+  return <Badge className={CONVERSATION_STATUS_CLASS[status]}>{CONVERSATION_STATUS_LABELS[status]}</Badge>;
 }

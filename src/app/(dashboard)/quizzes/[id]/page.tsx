@@ -2,7 +2,7 @@
 
 import { use, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, Eye, Save, Rocket, Loader2 } from "lucide-react";
+import { ChevronLeft, Eye, Save, Rocket, Loader2, Target } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,7 @@ import { DesignTab } from "@/components/editor/design-tab";
 import { AnalyticsTab } from "@/components/editor/analytics-tab";
 import { ShareTab } from "@/components/editor/share-tab";
 import { ComingSoonTab } from "@/components/editor/coming-soon-tab";
+import { TrackingTab } from "@/components/editor/tracking-tab";
 import { Quiz } from "@/lib/types";
 import { toast } from "sonner";
 
@@ -37,14 +38,19 @@ export default function QuizEditorPage({ params }: { params: Promise<{ id: strin
 
   async function handlePublish() {
     if (!quiz) return;
-    const hasStart = quiz.nodes.some((n) => n.type === "start");
-    const hasEnd = quiz.nodes.some((n) => n.type === "end");
+    // re-fetch live flow state: FlowEditor autosaves nodes/edges directly to
+    // Supabase without lifting them back into this component's `quiz` state,
+    // so validating against `quiz.nodes` here would check a stale snapshot.
+    const current = await fetchQuizFull(supabase, quiz.id);
+    if (!current) return;
+    const hasStart = current.nodes.some((n) => n.type === "start");
+    const hasEnd = current.nodes.some((n) => n.type === "end");
     if (!hasStart || !hasEnd) {
       toast.error("לא ניתן לפרסם: חסר צומת התחלה או סיום בזרימה");
       return;
     }
     await updateQuizMeta(supabase, quiz.id, { status: "active" });
-    setQuiz({ ...quiz, status: "active" });
+    setQuiz({ ...current, status: "active" });
     toast.success("השאלון פורסם בהצלחה");
   }
 
@@ -125,6 +131,12 @@ export default function QuizEditorPage({ params }: { params: Promise<{ id: strin
             <TabsTrigger value="flow" className="data-[state=active]:bg-accent">זרימה</TabsTrigger>
             <TabsTrigger value="design" className="data-[state=active]:bg-accent">עיצוב</TabsTrigger>
             <TabsTrigger value="ai" className="data-[state=active]:bg-accent">AI</TabsTrigger>
+            <TabsTrigger
+              value="tracking"
+              className="flex items-center gap-1.5 data-[state=active]:bg-emerald-500/15 data-[state=active]:text-emerald-600 dark:data-[state=active]:text-emerald-400"
+            >
+              <Target className="size-3.5" /> טראקינג
+            </TabsTrigger>
             <TabsTrigger value="integrations" className="data-[state=active]:bg-accent">אינטגרציות</TabsTrigger>
             <TabsTrigger value="analytics" className="data-[state=active]:bg-accent">אנליטיקה</TabsTrigger>
             <TabsTrigger value="share" className="data-[state=active]:bg-accent">שיתוף והטמעה</TabsTrigger>
@@ -143,6 +155,9 @@ export default function QuizEditorPage({ params }: { params: Promise<{ id: strin
         </TabsContent>
         <TabsContent value="ai" className="flex-1 min-h-0 m-0 overflow-auto">
           <ComingSoonTab title="AI" description="יצירת שאלון אוטומטית וניסוח שאלות בעזרת AI תגיע בשלב הבא." />
+        </TabsContent>
+        <TabsContent value="tracking" className="flex-1 min-h-0 m-0 overflow-auto">
+          <TrackingTab quiz={quiz} />
         </TabsContent>
         <TabsContent value="integrations" className="flex-1 min-h-0 m-0 overflow-auto">
           <ComingSoonTab title="אינטגרציות" description="חיבור Webhook, Google Sheets, Zapier ופיקסלים לשאלון הזה יתווסף בשלב הבא. בינתיים אפשר להגדיר Webhook כללי בעמוד האינטגרציות הראשי." />

@@ -119,11 +119,25 @@ export async function createQuiz(
   if (error) throw error;
 
   const startNode: QuizNode = { id: `start-${Date.now()}`, type: "start", position: { x: 0, y: 0 }, data: { kind: "start" } };
-  await supabase.from("quiz_nodes").insert(nodeToRow(quizRow.id, startNode));
+  const endNode: QuizNode = {
+    id: `end-${Date.now()}`,
+    type: "end",
+    position: { x: 0, y: 250 },
+    data: { kind: "end", title: "תודה רבה!", text: "קיבלנו את הפרטים שלך.", ctaLabel: "", ctaUrl: "" },
+  };
+  const startToEndEdge: QuizEdge = { id: `edge-${Date.now()}`, source: startNode.id, sourceHandle: null, target: endNode.id };
+
+  await supabase.from("quiz_nodes").insert([nodeToRow(quizRow.id, startNode), nodeToRow(quizRow.id, endNode)]);
+  await supabase.from("quiz_edges").insert(edgeToRow(quizRow.id, startToEndEdge));
   const theme = THEME_PRESETS.clean_light;
   await supabase.from("quiz_themes").insert(themeToRow(quizRow.id, theme));
 
-  return quizRowToQuiz(quizRow, [nodeToRow(quizRow.id, startNode)], [], themeToRow(quizRow.id, theme));
+  return quizRowToQuiz(
+    quizRow,
+    [nodeToRow(quizRow.id, startNode), nodeToRow(quizRow.id, endNode)],
+    [edgeToRow(quizRow.id, startToEndEdge)],
+    themeToRow(quizRow.id, theme)
+  );
 }
 
 export async function updateQuizMeta(
