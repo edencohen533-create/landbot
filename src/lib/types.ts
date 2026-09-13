@@ -248,6 +248,25 @@ export interface Lead {
   statusHistory: { status: LeadStatus; at: string }[];
 }
 
+export type IntegrationKind = "webhook" | "meta_pixel" | "tiktok_pixel";
+
+export interface Integration {
+  id: string;
+  workspaceId: string;
+  kind: IntegrationKind;
+  name: string;
+  enabled: boolean;
+  // webhook
+  url?: string;
+  secret?: string;
+  // pixels
+  pixelId?: string;
+  createdAt: string;
+  lastTriggeredAt?: string;
+  lastStatus?: "success" | "error";
+  lastError?: string;
+}
+
 export interface AnalyticsPoint {
   date: string;
   views: number;

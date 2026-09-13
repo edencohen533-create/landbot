@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { Lead, LeadNote, LeadStatus, Quiz, QuizEdge, QuizNode, QuizStatus } from "./types";
+import { Integration, IntegrationKind, Lead, LeadNote, LeadStatus, Quiz, QuizEdge, QuizNode, QuizStatus } from "./types";
 import { DEMO_QUIZ, buildDemoLeads } from "./demo-data";
 
 function uid(prefix: string) {
@@ -10,6 +10,7 @@ function uid(prefix: string) {
 interface QuizFlowState {
   quizzes: Quiz[];
   leads: Lead[];
+  integrations: Integration[];
   createQuiz: (input: { name: string; description?: string; template: string }) => Quiz;
   updateQuiz: (id: string, patch: Partial<Quiz>) => void;
   duplicateQuiz: (id: string) => void;
@@ -17,9 +18,14 @@ interface QuizFlowState {
   setQuizStatus: (id: string, status: QuizStatus) => void;
   saveFlow: (id: string, nodes: QuizNode[], edges: QuizEdge[]) => void;
   getQuizBySlug: (slug: string) => Quiz | undefined;
-  addSubmission: (quizId: string, lead: Omit<Lead, "id" | "quizId" | "quizName" | "createdAt" | "statusHistory" | "notes">) => void;
+  addSubmission: (quizId: string, lead: Omit<Lead, "id" | "quizId" | "quizName" | "createdAt" | "statusHistory" | "notes">) => Lead | undefined;
   updateLeadStatus: (id: string, status: LeadStatus) => void;
   addLeadNote: (id: string, text: string) => void;
+  addIntegration: (input: { kind: IntegrationKind; name: string; url?: string; secret?: string; pixelId?: string }) => Integration;
+  updateIntegration: (id: string, patch: Partial<Integration>) => void;
+  deleteIntegration: (id: string) => void;
+  toggleIntegration: (id: string, enabled: boolean) => void;
+  recordIntegrationResult: (id: string, result: { status: "success" | "error"; error?: string }) => void;
 }
 
 const START_TEMPLATES: Record<string, { nodes: QuizNode[]; edges: QuizEdge[] }> = {
@@ -34,6 +40,7 @@ export const useQuizFlowStore = create<QuizFlowState>()(
     (set, get) => ({
       quizzes: [DEMO_QUIZ],
       leads: buildDemoLeads(),
+      integrations: [],
 
       createQuiz: ({ name, description, template }) => {
         const base = START_TEMPLATES[template] ?? START_TEMPLATES.blank;
@@ -130,6 +137,54 @@ export const useQuizFlowStore = create<QuizFlowState>()(
           statusHistory: [{ status: "new", at: now }],
         };
         set((s) => ({ leads: [lead, ...s.leads] }));
+        return lead;
+      },
+
+      addIntegration: ({ kind, name, url, secret, pixelId }) => {
+        const integration: Integration = {
+          id: uid("intg"),
+          workspaceId: "ws-demo",
+          kind,
+          name,
+          enabled: true,
+          url,
+          secret,
+          pixelId,
+          createdAt: new Date().toISOString(),
+        };
+        set((s) => ({ integrations: [integration, ...s.integrations] }));
+        return integration;
+      },
+
+      updateIntegration: (id, patch) => {
+        set((s) => ({
+          integrations: s.integrations.map((i) => (i.id === id ? { ...i, ...patch } : i)),
+        }));
+      },
+
+      deleteIntegration: (id) => {
+        set((s) => ({ integrations: s.integrations.filter((i) => i.id !== id) }));
+      },
+
+      toggleIntegration: (id, enabled) => {
+        set((s) => ({
+          integrations: s.integrations.map((i) => (i.id === id ? { ...i, enabled } : i)),
+        }));
+      },
+
+      recordIntegrationResult: (id, result) => {
+        set((s) => ({
+          integrations: s.integrations.map((i) =>
+            i.id === id
+              ? {
+                  ...i,
+                  lastTriggeredAt: new Date().toISOString(),
+                  lastStatus: result.status,
+                  lastError: result.error,
+                }
+              : i
+          ),
+        }));
       },
 
       updateLeadStatus: (id, status) => {

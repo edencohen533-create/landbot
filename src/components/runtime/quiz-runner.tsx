@@ -7,6 +7,7 @@ import { ArrowRight, Check } from "lucide-react";
 import { Quiz, QuizNode, LeadAnswer } from "@/lib/types";
 import { getStartNode, resolveRenderable, isValidIsraeliPhone } from "@/lib/quiz-runtime";
 import { useQuizFlowStore } from "@/lib/store";
+import { triggerIntegrations } from "@/lib/integrations";
 import { Checkbox } from "@/components/ui/checkbox";
 
 function radiusFor(style: Quiz["theme"]["buttonStyle"]) {
@@ -73,7 +74,7 @@ export function QuizRunner({ quiz }: { quiz: Quiz }) {
     if (submittedRef.current) return;
     submittedRef.current = true;
     setSubmitted(true);
-    addSubmission(quiz.id, {
+    const lead = addSubmission(quiz.id, {
       name: leadInfo.name || "ללא שם",
       phone: leadInfo.phone,
       email: leadInfo.email,
@@ -86,6 +87,7 @@ export function QuizRunner({ quiz }: { quiz: Quiz }) {
       answers: Object.values(answers),
       assignedTo: undefined,
     });
+    if (lead) triggerIntegrations(lead);
   }
 
   useEffect(() => {
