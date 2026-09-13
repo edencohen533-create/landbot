@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
@@ -11,6 +11,8 @@ import {
   Pencil,
   Users,
   BarChart3,
+  MoreVertical,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,21 +33,37 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { QuizStatusBadge } from "@/components/shared/status-badges";
 import { CreateQuizDialog } from "@/components/quizzes/create-quiz-dialog";
-import { useQuizFlowStore } from "@/lib/store";
-import { QuizStatus } from "@/lib/types";
-import { MoreVertical } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
+import { deleteQuiz, duplicateQuiz, getWorkspaceId, listLeads, listQuizzes, updateQuizMeta } from "@/lib/supabase/queries";
+import { seedDemoQuiz } from "@/lib/demo-seed";
+import { Lead, Quiz, QuizStatus } from "@/lib/types";
 
 function QuizzesPageInner() {
   const searchParams = useSearchParams();
-  const quizzes = useQuizFlowStore((s) => s.quizzes);
-  const leads = useQuizFlowStore((s) => s.leads);
-  const duplicateQuiz = useQuizFlowStore((s) => s.duplicateQuiz);
-  const deleteQuiz = useQuizFlowStore((s) => s.deleteQuiz);
-  const setQuizStatus = useQuizFlowStore((s) => s.setQuizStatus);
+  const supabase = useMemo(() => createClient(), []);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [quizzes, setQuizzes] = useState<Quiz[]>([]);
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [loading, setLoading] = useState(true);
 
   const [dialogOpen, setDialogOpen] = useState(searchParams.get("new") === "1");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<QuizStatus | "all">("all");
+  const [seeding, setSeeding] = useState(false);
+
+  const load = useCallback(async () => {
+    const wsId = await getWorkspaceId(supabase);
+    setWorkspaceId(wsId);
+    const [q, l] = await Promise.all([listQuizzes(supabase, wsId), listLeads(supabase, wsId)]);
+    setQuizzes(q);
+    setLeads(l);
+    setLoading(false);
+  }, [supabase]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial client-side data fetch on mount
+    load();
+  }, [load]);
 
   const filtered = useMemo(() => {
     return quizzes.filter((q) => {
@@ -66,6 +84,38 @@ function QuizzesPageInner() {
       const d = new Date(l.createdAt);
       return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
     }).length;
+  }
+
+  async function handleDuplicate(quiz: Quiz) {
+    await duplicateQuiz(supabase, quiz);
+    load();
+  }
+
+  async function handleSeedDemo() {
+    if (!workspaceId || seeding) return;
+    setSeeding(true);
+    await seedDemoQuiz(supabase, workspaceId);
+    setSeeding(false);
+    load();
+  }
+
+  async function handleDelete(quizId: string) {
+    setQuizzes((qs) => qs.filter((q) => q.id !== quizId));
+    await deleteQuiz(supabase, quizId);
+  }
+
+  async function handleToggleStatus(quizId: string, checked: boolean) {
+    const nextStatus: QuizStatus = checked ? "active" : "paused";
+    setQuizzes((qs) => qs.map((q) => (q.id === quizId ? { ...q, status: nextStatus } : q)));
+    await updateQuizMeta(supabase, quizId, { status: nextStatus });
+  }
+
+  if (loading) {
+    return (
+      <div className="p-8 flex items-center justify-center text-muted-foreground">
+        <Loader2 className="size-5 animate-spin" />
+      </div>
+    );
   }
 
   return (
@@ -90,7 +140,7 @@ function QuizzesPageInner() {
         </div>
         <Select
           value={statusFilter}
-          onValueChange={(v) => setStatusFilter(v as QuizStatus | "all")}
+          onValueChange={(v) => v && setStatusFilter(v as QuizStatus | "all")}
           items={{ all: "כל הסטטוסים", draft: "טיוטה", active: "פעיל", paused: "מושהה" }}
         >
           <SelectTrigger className="w-40">
@@ -107,8 +157,14 @@ function QuizzesPageInner() {
 
       {filtered.length === 0 ? (
         <Card>
-          <CardContent className="py-16 text-center text-muted-foreground">
-            לא נמצאו שאלונים תואמים
+          <CardContent className="py-16 text-center text-muted-foreground space-y-3">
+            <p>{quizzes.length === 0 ? "עדיין אין שאלונים — צור את הראשון שלך" : "לא נמצאו שאלונים תואמים"}</p>
+            {quizzes.length === 0 && (
+              <Button variant="outline" size="sm" onClick={handleSeedDemo} disabled={seeding}>
+                {seeding && <Loader2 className="size-3.5 animate-spin" />}
+                טען שאלון לדוגמה עם 15 לידים
+              </Button>
+            )}
           </CardContent>
         </Card>
       ) : (
@@ -136,13 +192,10 @@ function QuizzesPageInner() {
                         }
                       />
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => duplicateQuiz(quiz.id)}>
+                        <DropdownMenuItem onClick={() => handleDuplicate(quiz)}>
                           <Copy className="size-4" /> שכפל
                         </DropdownMenuItem>
-                        <DropdownMenuItem
-                          variant="destructive"
-                          onClick={() => deleteQuiz(quiz.id)}
-                        >
+                        <DropdownMenuItem variant="destructive" onClick={() => handleDelete(quiz.id)}>
                           <Trash2 className="size-4" /> מחק
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -176,9 +229,7 @@ function QuizzesPageInner() {
                     <div className="flex items-center gap-2">
                       <Switch
                         checked={quiz.status === "active"}
-                        onCheckedChange={(checked) =>
-                          setQuizStatus(quiz.id, checked ? "active" : "paused")
-                        }
+                        onCheckedChange={(checked) => handleToggleStatus(quiz.id, checked)}
                       />
                       <span className="text-xs text-muted-foreground">הפעלה</span>
                     </div>
@@ -201,7 +252,9 @@ function QuizzesPageInner() {
         </div>
       )}
 
-      <CreateQuizDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+      {workspaceId && (
+        <CreateQuizDialog open={dialogOpen} onOpenChange={setDialogOpen} workspaceId={workspaceId} onCreated={load} />
+      )}
     </div>
   );
 }

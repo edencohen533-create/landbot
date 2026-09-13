@@ -1,34 +1,41 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { notFound } from "next/navigation";
-import { ChevronLeft, Eye, Save, Rocket } from "lucide-react";
+import { ChevronLeft, Eye, Save, Rocket, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { QuizStatusBadge } from "@/components/shared/status-badges";
-import { useQuizFlowStore } from "@/lib/store";
+import { createClient } from "@/lib/supabase/client";
+import { fetchQuizFull, updateQuizMeta } from "@/lib/supabase/queries";
 import { FlowEditor } from "@/components/editor/flow-editor";
 import { DesignTab } from "@/components/editor/design-tab";
 import { AnalyticsTab } from "@/components/editor/analytics-tab";
 import { ShareTab } from "@/components/editor/share-tab";
 import { ComingSoonTab } from "@/components/editor/coming-soon-tab";
+import { Quiz } from "@/lib/types";
 import { toast } from "sonner";
 
 export default function QuizEditorPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const quiz = useQuizFlowStore((s) => s.quizzes.find((q) => q.id === id));
-  const updateQuiz = useQuizFlowStore((s) => s.updateQuiz);
-  const setQuizStatus = useQuizFlowStore((s) => s.setQuizStatus);
-  const [nameDraft, setNameDraft] = useState(quiz?.name ?? "");
+  const supabase = useMemo(() => createClient(), []);
+  const [quiz, setQuiz] = useState<Quiz | null | undefined>(undefined);
+  const [nameDraft, setNameDraft] = useState("");
   const [savedAgo, setSavedAgo] = useState<string | null>(null);
 
-  if (!quiz) {
-    notFound();
-  }
+  const load = useCallback(async () => {
+    const q = await fetchQuizFull(supabase, id);
+    setQuiz(q);
+    if (q) setNameDraft(q.name);
+  }, [supabase, id]);
 
-  function handlePublish() {
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial client-side data fetch on mount
+    load();
+  }, [load]);
+
+  async function handlePublish() {
     if (!quiz) return;
     const hasStart = quiz.nodes.some((n) => n.type === "start");
     const hasEnd = quiz.nodes.some((n) => n.type === "end");
@@ -36,8 +43,32 @@ export default function QuizEditorPage({ params }: { params: Promise<{ id: strin
       toast.error("לא ניתן לפרסם: חסר צומת התחלה או סיום בזרימה");
       return;
     }
-    setQuizStatus(quiz.id, "active");
+    await updateQuizMeta(supabase, quiz.id, { status: "active" });
+    setQuiz({ ...quiz, status: "active" });
     toast.success("השאלון פורסם בהצלחה");
+  }
+
+  async function handleNameBlur() {
+    if (!quiz || !nameDraft.trim() || nameDraft === quiz.name) return;
+    await updateQuizMeta(supabase, quiz.id, { name: nameDraft });
+    setQuiz({ ...quiz, name: nameDraft });
+  }
+
+  if (quiz === undefined) {
+    return (
+      <div className="flex h-screen items-center justify-center text-muted-foreground">
+        <Loader2 className="size-5 animate-spin" />
+      </div>
+    );
+  }
+
+  if (quiz === null) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center gap-3 text-muted-foreground">
+        <p>השאלון לא נמצא</p>
+        <Link href="/quizzes" className="text-primary hover:underline text-sm">חזרה לשאלונים</Link>
+      </div>
+    );
   }
 
   return (
@@ -62,10 +93,10 @@ export default function QuizEditorPage({ params }: { params: Promise<{ id: strin
           <Input
             value={nameDraft}
             onChange={(e) => setNameDraft(e.target.value)}
-            onBlur={() => quiz && updateQuiz(quiz.id, { name: nameDraft || quiz.name })}
+            onBlur={handleNameBlur}
             className="h-8 w-56 border-transparent bg-transparent px-1.5 font-semibold shadow-none hover:border-input focus-visible:border-input"
           />
-          {quiz && <QuizStatusBadge status={quiz.status} />}
+          <QuizStatusBadge status={quiz.status} />
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {savedAgo && <span className="text-xs text-muted-foreground hidden lg:inline">{savedAgo}</span>}
@@ -74,7 +105,7 @@ export default function QuizEditorPage({ params }: { params: Promise<{ id: strin
             size="sm"
             nativeButton={false}
             render={
-              <a href={`/q/${quiz?.slug}`} target="_blank" rel="noreferrer">
+              <a href={`/q/${quiz.slug}`} target="_blank" rel="noreferrer">
                 <Eye className="size-4" /> תצוגה מקדימה
               </a>
             }
@@ -88,43 +119,41 @@ export default function QuizEditorPage({ params }: { params: Promise<{ id: strin
         </div>
       </header>
 
-      {quiz && (
-        <Tabs defaultValue="flow" className="flex-1 min-h-0 flex flex-col gap-0">
-          <div className="border-b px-5 shrink-0 bg-card">
-            <TabsList className="bg-transparent h-11 p-0 gap-1">
-              <TabsTrigger value="flow" className="data-[state=active]:bg-accent">זרימה</TabsTrigger>
-              <TabsTrigger value="design" className="data-[state=active]:bg-accent">עיצוב</TabsTrigger>
-              <TabsTrigger value="ai" className="data-[state=active]:bg-accent">AI</TabsTrigger>
-              <TabsTrigger value="integrations" className="data-[state=active]:bg-accent">אינטגרציות</TabsTrigger>
-              <TabsTrigger value="analytics" className="data-[state=active]:bg-accent">אנליטיקה</TabsTrigger>
-              <TabsTrigger value="share" className="data-[state=active]:bg-accent">שיתוף והטמעה</TabsTrigger>
-            </TabsList>
-          </div>
-          <TabsContent value="flow" className="flex-1 min-h-0 m-0">
-            <FlowEditor
-              quizId={quiz.id}
-              initialNodes={quiz.nodes}
-              initialEdges={quiz.edges}
-              onSavedIndicator={setSavedAgo}
-            />
-          </TabsContent>
-          <TabsContent value="design" className="flex-1 min-h-0 m-0 overflow-auto">
-            <DesignTab quiz={quiz} />
-          </TabsContent>
-          <TabsContent value="ai" className="flex-1 min-h-0 m-0 overflow-auto">
-            <ComingSoonTab title="AI" description="יצירת שאלון אוטומטית וניסוח שאלות בעזרת AI תגיע בשלב הבא." />
-          </TabsContent>
-          <TabsContent value="integrations" className="flex-1 min-h-0 m-0 overflow-auto">
-            <ComingSoonTab title="אינטגרציות" description="חיבור Webhook, Google Sheets, Zapier ופיקסלים לשאלון הזה יתווסף בשלב הבא." />
-          </TabsContent>
-          <TabsContent value="analytics" className="flex-1 min-h-0 m-0 overflow-auto">
-            <AnalyticsTab quizId={quiz.id} />
-          </TabsContent>
-          <TabsContent value="share" className="flex-1 min-h-0 m-0 overflow-auto">
-            <ShareTab quiz={quiz} />
-          </TabsContent>
-        </Tabs>
-      )}
+      <Tabs defaultValue="flow" className="flex-1 min-h-0 flex flex-col gap-0">
+        <div className="border-b px-5 shrink-0 bg-card">
+          <TabsList className="bg-transparent h-11 p-0 gap-1">
+            <TabsTrigger value="flow" className="data-[state=active]:bg-accent">זרימה</TabsTrigger>
+            <TabsTrigger value="design" className="data-[state=active]:bg-accent">עיצוב</TabsTrigger>
+            <TabsTrigger value="ai" className="data-[state=active]:bg-accent">AI</TabsTrigger>
+            <TabsTrigger value="integrations" className="data-[state=active]:bg-accent">אינטגרציות</TabsTrigger>
+            <TabsTrigger value="analytics" className="data-[state=active]:bg-accent">אנליטיקה</TabsTrigger>
+            <TabsTrigger value="share" className="data-[state=active]:bg-accent">שיתוף והטמעה</TabsTrigger>
+          </TabsList>
+        </div>
+        <TabsContent value="flow" className="flex-1 min-h-0 m-0">
+          <FlowEditor
+            quizId={quiz.id}
+            initialNodes={quiz.nodes}
+            initialEdges={quiz.edges}
+            onSavedIndicator={setSavedAgo}
+          />
+        </TabsContent>
+        <TabsContent value="design" className="flex-1 min-h-0 m-0 overflow-auto">
+          <DesignTab quiz={quiz} onThemeChange={(theme) => setQuiz({ ...quiz, theme })} />
+        </TabsContent>
+        <TabsContent value="ai" className="flex-1 min-h-0 m-0 overflow-auto">
+          <ComingSoonTab title="AI" description="יצירת שאלון אוטומטית וניסוח שאלות בעזרת AI תגיע בשלב הבא." />
+        </TabsContent>
+        <TabsContent value="integrations" className="flex-1 min-h-0 m-0 overflow-auto">
+          <ComingSoonTab title="אינטגרציות" description="חיבור Webhook, Google Sheets, Zapier ופיקסלים לשאלון הזה יתווסף בשלב הבא. בינתיים אפשר להגדיר Webhook כללי בעמוד האינטגרציות הראשי." />
+        </TabsContent>
+        <TabsContent value="analytics" className="flex-1 min-h-0 m-0 overflow-auto">
+          <AnalyticsTab quizId={quiz.id} />
+        </TabsContent>
+        <TabsContent value="share" className="flex-1 min-h-0 m-0 overflow-auto">
+          <ShareTab quiz={quiz} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

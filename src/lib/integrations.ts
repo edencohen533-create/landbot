@@ -1,50 +1,12 @@
-import { Integration, Lead } from "./types";
-import { useQuizFlowStore } from "./store";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { Integration } from "./types";
+import { recordIntegrationResult } from "./supabase/queries";
 
 declare global {
   interface Window {
     fbq?: (...args: unknown[]) => void;
     ttq?: { load: (id: string) => void; page: () => void; track: (event: string, data?: unknown) => void };
     _qfPixelsLoaded?: Set<string>;
-  }
-}
-
-async function fireWebhook(integration: Integration, lead: Lead) {
-  if (!integration.url) return;
-  try {
-    const res = await fetch("/api/relay-webhook", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        url: integration.url,
-        secret: integration.secret,
-        payload: {
-          leadId: lead.id,
-          quizId: lead.quizId,
-          quizName: lead.quizName,
-          name: lead.name,
-          phone: lead.phone,
-          email: lead.email,
-          score: lead.score,
-          category: lead.category,
-          utmSource: lead.utmSource,
-          utmMedium: lead.utmMedium,
-          utmCampaign: lead.utmCampaign,
-          answers: lead.answers,
-          createdAt: lead.createdAt,
-        },
-      }),
-    });
-    const data = await res.json().catch(() => ({ ok: false }));
-    useQuizFlowStore.getState().recordIntegrationResult(integration.id, {
-      status: data.ok ? "success" : "error",
-      error: data.ok ? undefined : data.error || `HTTP ${data.status ?? "?"}`,
-    });
-  } catch (err) {
-    useQuizFlowStore.getState().recordIntegrationResult(integration.id, {
-      status: "error",
-      error: err instanceof Error ? err.message : "שליחה נכשלה",
-    });
   }
 }
 
@@ -115,30 +77,38 @@ function loadTikTokPixel(pixelId: string) {
   /* eslint-enable */
 }
 
-function fireMetaPixel(pixelId: string, lead: Lead) {
+function fireMetaPixel(pixelId: string) {
   loadMetaPixel(pixelId);
-  window.fbq?.("track", "Lead", { value: lead.score, currency: "ILS", content_name: lead.quizName });
+  window.fbq?.("track", "Lead");
 }
 
-function fireTikTokPixel(pixelId: string, lead: Lead) {
+function fireTikTokPixel(pixelId: string) {
   loadTikTokPixel(pixelId);
-  window.ttq?.track("SubmitForm", { value: lead.score, currency: "ILS", content_name: lead.quizName });
+  window.ttq?.track("SubmitForm");
 }
 
-export function triggerIntegrations(lead: Lead) {
-  const integrations = useQuizFlowStore.getState().integrations.filter((i) => i.enabled);
-  for (const integration of integrations) {
-    if (integration.kind === "webhook") {
-      void fireWebhook(integration, lead);
-    } else if (integration.kind === "meta_pixel" && integration.pixelId) {
-      fireMetaPixel(integration.pixelId, lead);
-    } else if (integration.kind === "tiktok_pixel" && integration.pixelId) {
-      fireTikTokPixel(integration.pixelId, lead);
+// Called from the PUBLIC (anonymous) quiz runtime after a successful submission.
+// Webhooks and secrets never touch the browser — a server route holding the
+// service-role key looks up the workspace's integrations and dispatches them,
+// returning only which pixels to fire client-side.
+export async function triggerIntegrations(leadId: string) {
+  try {
+    const res = await fetch("/api/dispatch-integrations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ leadId }),
+    });
+    const data = await res.json().catch(() => ({ ok: false, pixels: [] }));
+    for (const pixel of data.pixels ?? []) {
+      if (pixel.kind === "meta_pixel") fireMetaPixel(pixel.pixelId);
+      else if (pixel.kind === "tiktok_pixel") fireTikTokPixel(pixel.pixelId);
     }
+  } catch {
+    // best-effort — a failed integration dispatch should never block the quiz UX
   }
 }
 
-export async function testWebhook(integration: Integration): Promise<{ ok: boolean; error?: string }> {
+export async function testWebhook(supabase: SupabaseClient, integration: Integration): Promise<{ ok: boolean; error?: string }> {
   if (!integration.url) return { ok: false, error: "לא הוגדרה כתובת" };
   try {
     const res = await fetch("/api/relay-webhook", {
@@ -151,14 +121,14 @@ export async function testWebhook(integration: Integration): Promise<{ ok: boole
       }),
     });
     const data = await res.json().catch(() => ({ ok: false }));
-    useQuizFlowStore.getState().recordIntegrationResult(integration.id, {
+    await recordIntegrationResult(supabase, integration.id, {
       status: data.ok ? "success" : "error",
       error: data.ok ? undefined : data.error || `HTTP ${data.status ?? "?"}`,
     });
     return { ok: !!data.ok, error: data.error };
   } catch (err) {
     const error = err instanceof Error ? err.message : "שליחה נכשלה";
-    useQuizFlowStore.getState().recordIntegrationResult(integration.id, { status: "error", error });
+    await recordIntegrationResult(supabase, integration.id, { status: "error", error });
     return { ok: false, error };
   }
 }

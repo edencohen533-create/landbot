@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Download, Search } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Download, Search, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -15,7 +15,8 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { LeadStatusBadge, CategoryBadge } from "@/components/shared/status-badges";
 import { LeadDrawer } from "@/components/leads/lead-drawer";
-import { useQuizFlowStore } from "@/lib/store";
+import { createClient } from "@/lib/supabase/client";
+import { getWorkspaceId, listLeads } from "@/lib/supabase/queries";
 import { LEAD_STATUS_LABELS, Lead, LeadStatus } from "@/lib/types";
 
 function exportCsv(leads: Lead[]) {
@@ -41,10 +42,24 @@ function exportCsv(leads: Lead[]) {
 }
 
 export default function LeadsPage() {
-  const leads = useQuizFlowStore((s) => s.leads);
+  const supabase = useMemo(() => createClient(), []);
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<LeadStatus | "all">("all");
   const [selected, setSelected] = useState<Lead | null>(null);
+
+  const load = useCallback(async () => {
+    const workspaceId = await getWorkspaceId(supabase);
+    const data = await listLeads(supabase, workspaceId);
+    setLeads(data);
+    setLoading(false);
+  }, [supabase]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial client-side data fetch on mount
+    load();
+  }, [load]);
 
   const filtered = useMemo(() => {
     return leads.filter((l) => {
@@ -56,6 +71,14 @@ export default function LeadsPage() {
       return matchesQuery && matchesStatus;
     });
   }, [leads, query, statusFilter]);
+
+  if (loading) {
+    return (
+      <div className="p-8 flex items-center justify-center text-muted-foreground">
+        <Loader2 className="size-5 animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 md:p-8 space-y-6 max-w-[1400px]">
@@ -121,12 +144,14 @@ export default function LeadsPage() {
             </TableBody>
           </Table>
           {filtered.length === 0 && (
-            <div className="py-16 text-center text-muted-foreground">לא נמצאו לידים תואמים</div>
+            <div className="py-16 text-center text-muted-foreground">
+              {leads.length === 0 ? "עדיין אין לידים" : "לא נמצאו לידים תואמים"}
+            </div>
           )}
         </CardContent>
       </Card>
 
-      <LeadDrawer lead={selected} onOpenChange={(open) => !open && setSelected(null)} />
+      <LeadDrawer lead={selected} onOpenChange={(open) => !open && setSelected(null)} onUpdated={load} />
     </div>
   );
 }

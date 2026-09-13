@@ -1,9 +1,60 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Loader2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { createClient } from "@/lib/supabase/client";
+import { getWorkspaceId, updateProfileName, updateWorkspaceName } from "@/lib/supabase/queries";
+import { toast } from "sonner";
 
 export default function SettingsPage() {
+  const supabase = useMemo(() => createClient(), []);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [workspaceName, setWorkspaceName] = useState("");
+
+  const load = useCallback(async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+    setEmail(user.email ?? "");
+    setFullName((user.user_metadata?.full_name as string | undefined) ?? "");
+
+    const wsId = await getWorkspaceId(supabase);
+    setWorkspaceId(wsId);
+    const { data: ws } = await supabase.from("workspaces").select("name").eq("id", wsId).maybeSingle();
+    setWorkspaceName(ws?.name ?? "");
+    setLoading(false);
+  }, [supabase]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial client-side data fetch on mount
+    load();
+  }, [load]);
+
+  async function handleSave() {
+    if (!workspaceId) return;
+    setSaving(true);
+    await Promise.all([updateProfileName(supabase, fullName), updateWorkspaceName(supabase, workspaceId, workspaceName)]);
+    setSaving(false);
+    toast.success("הפרטים נשמרו");
+  }
+
+  if (loading) {
+    return (
+      <div className="p-8 flex items-center justify-center text-muted-foreground">
+        <Loader2 className="size-5 animate-spin" />
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 md:p-8 space-y-6 max-w-2xl">
       <h1 className="text-2xl font-bold tracking-tight">הגדרות</h1>
@@ -12,17 +63,20 @@ export default function SettingsPage() {
         <CardContent className="space-y-4">
           <div className="space-y-1.5">
             <Label className="text-xs">שם מלא</Label>
-            <Input defaultValue="עדן כהן" />
+            <Input value={fullName} onChange={(e) => setFullName(e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">אימייל</Label>
-            <Input defaultValue="edencohen533@gmail.com" dir="ltr" />
+            <Input value={email} dir="ltr" disabled />
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">שם ה-workspace</Label>
-            <Input defaultValue="workspace ראשי" />
+            <Input value={workspaceName} onChange={(e) => setWorkspaceName(e.target.value)} />
           </div>
-          <Button size="sm">שמור שינויים</Button>
+          <Button size="sm" onClick={handleSave} disabled={saving}>
+            {saving && <Loader2 className="size-4 animate-spin" />}
+            שמור שינויים
+          </Button>
         </CardContent>
       </Card>
       <Card className="opacity-70">

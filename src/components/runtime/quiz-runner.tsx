@@ -6,7 +6,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ArrowRight, Check } from "lucide-react";
 import { Quiz, QuizNode, LeadAnswer } from "@/lib/types";
 import { getStartNode, resolveRenderable, isValidIsraeliPhone } from "@/lib/quiz-runtime";
-import { useQuizFlowStore } from "@/lib/store";
+import { createClient } from "@/lib/supabase/client";
+import { recordAnalyticsEvent, submitPublicQuizResponse } from "@/lib/supabase/queries";
 import { triggerIntegrations } from "@/lib/integrations";
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -20,9 +21,11 @@ interface StepState {
 }
 
 export function QuizRunner({ quiz }: { quiz: Quiz }) {
-  const addSubmission = useQuizFlowStore((s) => s.addSubmission);
+  const supabase = useMemo(() => createClient(), []);
   const searchParams = useSearchParams();
   const theme = quiz.theme;
+  const utmSource = searchParams.get("utm_source") ?? undefined;
+  const startedRef = useRef(false);
 
   const totalSteps = useMemo(
     () => quiz.nodes.filter((n) => n.type === "question" || n.type === "lead_details").length,
@@ -58,6 +61,10 @@ export function QuizRunner({ quiz }: { quiz: Quiz }) {
   }
 
   function handleAdvance(fromId: string, handle: string | null = null) {
+    if (!startedRef.current) {
+      startedRef.current = true;
+      recordAnalyticsEvent(supabase, quiz.id, "start", utmSource);
+    }
     const next = resolveRenderable(quiz, fromId, handle);
     goTo(next);
   }
@@ -70,24 +77,33 @@ export function QuizRunner({ quiz }: { quiz: Quiz }) {
     setAnswers((a) => ({ ...a, [nodeId]: answer }));
   }
 
-  function submitLead() {
+  useEffect(() => {
+    recordAnalyticsEvent(supabase, quiz.id, "view", utmSource);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function submitLead() {
     if (submittedRef.current) return;
     submittedRef.current = true;
     setSubmitted(true);
-    const lead = addSubmission(quiz.id, {
-      name: leadInfo.name || "ללא שם",
-      phone: leadInfo.phone,
-      email: leadInfo.email,
-      score,
-      category: score >= 26 ? "hot" : score >= 16 ? "warm" : "cold",
-      status: "new",
-      utmSource: searchParams.get("utm_source") ?? undefined,
-      utmMedium: searchParams.get("utm_medium") ?? undefined,
-      utmCampaign: searchParams.get("utm_campaign") ?? undefined,
-      answers: Object.values(answers),
-      assignedTo: undefined,
-    });
-    if (lead) triggerIntegrations(lead);
+    const category = score >= 26 ? "hot" : score >= 16 ? "warm" : "cold";
+    const leadId = await submitPublicQuizResponse(
+      supabase,
+      quiz,
+      {
+        name: leadInfo.name || "ללא שם",
+        phone: leadInfo.phone,
+        email: leadInfo.email,
+        score,
+        category,
+        utmSource,
+        utmMedium: searchParams.get("utm_medium") ?? undefined,
+        utmCampaign: searchParams.get("utm_campaign") ?? undefined,
+      },
+      Object.values(answers)
+    );
+    recordAnalyticsEvent(supabase, quiz.id, "complete", utmSource);
+    triggerIntegrations(leadId);
   }
 
   useEffect(() => {

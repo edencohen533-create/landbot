@@ -11,10 +11,20 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useQuizFlowStore } from "@/lib/store";
+import { createClient } from "@/lib/supabase/client";
+import { addIntegration } from "@/lib/supabase/queries";
 
-export function WebhookDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const addIntegration = useQuizFlowStore((s) => s.addIntegration);
+export function WebhookDialog({
+  open,
+  onOpenChange,
+  workspaceId,
+  onCreated,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  workspaceId: string;
+  onCreated?: () => void;
+}) {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [secret, setSecret] = useState("");
@@ -25,11 +35,13 @@ export function WebhookDialog({ open, onOpenChange }: { open: boolean; onOpenCha
     setSecret("");
   }
 
-  function handleCreate() {
+  async function handleCreate() {
     if (!name.trim() || !url.trim()) return;
-    addIntegration({ kind: "webhook", name: name.trim(), url: url.trim(), secret: secret.trim() || undefined });
+    const supabase = createClient();
+    await addIntegration(supabase, workspaceId, { kind: "webhook", name: name.trim(), url: url.trim(), secret: secret.trim() || undefined });
     onOpenChange(false);
     reset();
+    onCreated?.();
   }
 
   return (

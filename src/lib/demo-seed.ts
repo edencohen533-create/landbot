@@ -1,13 +1,6 @@
-import {
-  Lead,
-  LeadStatus,
-  Quiz,
-  QuizNode,
-  QuizEdge,
-  THEME_PRESETS,
-} from "./types";
-
-const DEMO_QUIZ_ID = "quiz-demo-financial";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { QuizEdge, QuizNode, THEME_PRESETS } from "./types";
+import { createQuiz, saveFlow, updateQuizMeta, updateQuizTheme } from "./supabase/queries";
 
 function n(id: string, type: QuizNode["type"], x: number, y: number, data: QuizNode["data"]): QuizNode {
   return { id, type, position: { x, y }, data };
@@ -101,45 +94,22 @@ const edges: QuizEdge[] = [
   { id: "e-start-msg", source: "start-1", sourceHandle: null, target: "msg-1" },
   { id: "e-msg-q1", source: "msg-1", sourceHandle: null, target: "q-age" },
   ...nodes
-    .filter((nd): nd is QuizNode & { data: { kind: "question" } } => nd.data.kind === "question")
+    .filter((nd) => nd.data.kind === "question")
     .flatMap((nd) =>
-      (nd.data as unknown as { options: { id: string; nextNodeId: string | null }[] }).options.map(
-        (opt) => ({
-          id: `e-${nd.id}-${opt.id}`,
-          source: nd.id,
-          sourceHandle: opt.id,
-          target: opt.nextNodeId as string,
-        })
-      )
+      (nd.data as Extract<QuizNode["data"], { kind: "question" }>).options.map((opt) => ({
+        id: `e-${nd.id}-${opt.id}`,
+        source: nd.id,
+        sourceHandle: opt.id,
+        target: opt.nextNodeId as string,
+      }))
     ),
   { id: "e-lead-end", source: "lead-1", sourceHandle: null, target: "end-1" },
 ];
 
-export const DEMO_QUIZ: Quiz = {
-  id: DEMO_QUIZ_ID,
-  workspaceId: "ws-demo",
-  name: "בדיקת התאמה לתכנון פיננסי",
-  description: "שאלון דמו לאיתור לידים חמים לייעוץ פיננסי",
-  slug: "financial-fit",
-  status: "active",
-  nodes,
-  edges,
-  theme: THEME_PRESETS.solina_green,
-  allowBack: true,
-  createdAt: "2026-08-10T09:00:00.000Z",
-  updatedAt: "2026-09-08T14:30:00.000Z",
-};
-
 const FIRST_NAMES = ["דנה", "יוסי", "מיכל", "אורי", "שירה", "עידן", "נועה", "רועי", "טל", "ליאור", "אביגיל", "עומר", "הילה", "גיא", "רותם"];
 const LAST_NAMES = ["כהן", "לוי", "מזרחי", "פרץ", "ביטון", "אברהם", "דהן", "אזולאי", "שפירא", "רוזן"];
 const UTM_SOURCES = ["facebook", "google", "instagram", "tiktok", "direct"];
-const STATUSES: LeadStatus[] = ["new", "in_progress", "meeting_scheduled", "closed", "not_relevant"];
-
-function categoryFromScore(score: number): "hot" | "warm" | "cold" {
-  if (score >= 26) return "hot";
-  if (score >= 16) return "warm";
-  return "cold";
-}
+const STATUSES = ["new", "in_progress", "meeting_scheduled", "closed", "not_relevant"] as const;
 
 function seededRandom(seed: number) {
   let value = seed;
@@ -149,54 +119,47 @@ function seededRandom(seed: number) {
   };
 }
 
-export function buildDemoLeads(): Lead[] {
+function categoryFromScore(score: number): "hot" | "warm" | "cold" {
+  if (score >= 26) return "hot";
+  if (score >= 16) return "warm";
+  return "cold";
+}
+
+export async function seedDemoQuiz(supabase: SupabaseClient, workspaceId: string) {
+  const quiz = await createQuiz(supabase, workspaceId, {
+    name: "בדיקת התאמה לתכנון פיננסי",
+    description: "שאלון דמו לאיתור לידים חמים לייעוץ פיננסי",
+  });
+
+  await supabase.from("quizzes").update({ slug: "financial-fit" }).eq("id", quiz.id);
+  await saveFlow(supabase, quiz.id, nodes, edges);
+  await updateQuizTheme(supabase, quiz.id, THEME_PRESETS.solina_green);
+  await updateQuizMeta(supabase, quiz.id, { status: "active" });
+
   const rand = seededRandom(42);
-  const leads: Lead[] = [];
-  for (let i = 0; i < 15; i++) {
+  const leadRows = Array.from({ length: 15 }, (_, i) => {
     const first = FIRST_NAMES[i % FIRST_NAMES.length];
     const last = LAST_NAMES[Math.floor(rand() * LAST_NAMES.length)];
     const score = Math.round(8 + rand() * 30);
     const createdDaysAgo = Math.floor(rand() * 28);
     const createdAt = new Date(Date.now() - createdDaysAgo * 24 * 60 * 60 * 1000).toISOString();
-    const status = STATUSES[Math.floor(rand() * STATUSES.length)];
-    leads.push({
-      id: `lead-demo-${i + 1}`,
-      quizId: DEMO_QUIZ_ID,
-      quizName: DEMO_QUIZ.name,
+    return {
+      workspace_id: workspaceId,
+      quiz_id: quiz.id,
       name: `${first} ${last}`,
       phone: `05${Math.floor(10000000 + rand() * 89999999)}`,
       email: `${first}.${last}@example.co.il`.toLowerCase(),
       score,
       category: categoryFromScore(score),
-      status,
-      utmSource: UTM_SOURCES[Math.floor(rand() * UTM_SOURCES.length)],
-      utmMedium: "cpc",
-      utmCampaign: "quizflow-demo",
-      answers: [
-        { nodeId: "q-age", questionTitle: "מהו גילך?", answerLabel: "31–45", score: 5 },
-        { nodeId: "q-field", questionTitle: "באיזה תחום עיסוק?", answerLabel: "עצמאי", score: 7 },
-        { nodeId: "q-income", questionTitle: "מהו סדר הגודל של ההכנסה החודשית?", answerLabel: "20,000–40,000 ₪", score: 8 },
-        { nodeId: "q-priority", questionTitle: "מה הכי חשוב לך כרגע?", answerLabel: "השקעות", score: 8 },
-      ],
-      notes: [],
-      assignedTo: i % 3 === 0 ? "דניאל" : undefined,
-      createdAt,
-      statusHistory: [{ status: "new", at: createdAt }],
-    });
-  }
-  return leads.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-}
+      status: STATUSES[Math.floor(rand() * STATUSES.length)],
+      utm_source: UTM_SOURCES[Math.floor(rand() * UTM_SOURCES.length)],
+      utm_medium: "cpc",
+      utm_campaign: "quizflow-demo",
+      created_at: createdAt,
+    };
+  });
 
-export function buildDemoAnalytics() {
-  const rand = seededRandom(7);
-  const points = [];
-  for (let i = 29; i >= 0; i--) {
-    const date = new Date(Date.now() - i * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const views = Math.round(20 + rand() * 60);
-    const starts = Math.round(views * (0.55 + rand() * 0.2));
-    const completions = Math.round(starts * (0.45 + rand() * 0.25));
-    const leads = Math.round(completions * (0.8 + rand() * 0.15));
-    points.push({ date, views, starts, completions, leads });
-  }
-  return points;
+  await supabase.from("leads").insert(leadRows);
+
+  return quiz;
 }

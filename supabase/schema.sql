@@ -213,6 +213,27 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
+-- Auto-log the initial status whenever a lead is created — works for both
+-- authenticated owners and anonymous public quiz submissions, which is why
+-- this lives in a trigger rather than requiring a public INSERT policy on
+-- lead_status_history.
+create or replace function public.log_initial_lead_status()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.lead_status_history (lead_id, status) values (new.id, new.status);
+  return new;
+end;
+$$;
+
+drop trigger if exists on_lead_created on public.leads;
+create trigger on_lead_created
+  after insert on public.leads
+  for each row execute function public.log_initial_lead_status();
+
 -- ============================================================
 -- 6. Row Level Security
 -- ============================================================

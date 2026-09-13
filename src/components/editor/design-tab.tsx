@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -13,7 +13,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useQuizFlowStore } from "@/lib/store";
+import { createClient } from "@/lib/supabase/client";
+import { updateQuizTheme } from "@/lib/supabase/queries";
 import { Quiz, QuizTheme, THEME_PRESETS } from "@/lib/types";
 
 const PRESETS: { key: string; label: string }[] = [
@@ -22,14 +23,19 @@ const PRESETS: { key: string; label: string }[] = [
   { key: "solina_green", label: "Solina Green" },
 ];
 
-export function DesignTab({ quiz }: { quiz: Quiz }) {
-  const updateQuiz = useQuizFlowStore((s) => s.updateQuiz);
+export function DesignTab({ quiz, onThemeChange }: { quiz: Quiz; onThemeChange?: (theme: QuizTheme) => void }) {
+  const supabase = useMemo(() => createClient(), []);
   const [theme, setTheme] = useState<QuizTheme>(quiz.theme);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function patch(next: Partial<QuizTheme>) {
     const merged = { ...theme, ...next };
     setTheme(merged);
-    updateQuiz(quiz.id, { theme: merged });
+    onThemeChange?.(merged);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      updateQuizTheme(supabase, quiz.id, merged);
+    }, 400);
   }
 
   return (

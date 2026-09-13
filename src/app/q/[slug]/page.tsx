@@ -1,12 +1,12 @@
-"use client";
-
-import { Suspense, use } from "react";
-import { useQuizFlowStore } from "@/lib/store";
+import { Suspense } from "react";
+import { createClient } from "@/lib/supabase/server";
+import { fetchQuizFullBySlug } from "@/lib/supabase/queries";
 import { QuizRunner } from "@/components/runtime/quiz-runner";
 
-function PublicQuizPageInner({ params }: { params: Promise<{ slug: string }> }) {
-  const { slug } = use(params);
-  const quiz = useQuizFlowStore((s) => s.quizzes.find((q) => q.slug === slug));
+export default async function PublicQuizPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const supabase = await createClient();
+  const quiz = await fetchQuizFullBySlug(supabase, slug);
 
   if (!quiz) {
     return (
@@ -16,13 +16,9 @@ function PublicQuizPageInner({ params }: { params: Promise<{ slug: string }> }) 
     );
   }
 
-  return <QuizRunner quiz={quiz} />;
-}
-
-export default function PublicQuizPage(props: { params: Promise<{ slug: string }> }) {
   return (
     <Suspense>
-      <PublicQuizPageInner {...props} />
+      <QuizRunner quiz={quiz} />
     </Suspense>
   );
 }

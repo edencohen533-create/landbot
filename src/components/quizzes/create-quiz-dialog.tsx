@@ -13,8 +13,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { useQuizFlowStore } from "@/lib/store";
-import { MessageSquareText, Target, CalendarClock, FilePlus } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
+import { createQuiz } from "@/lib/supabase/queries";
+import { MessageSquareText, Target, CalendarClock, FilePlus, Loader2 } from "lucide-react";
 
 const TEMPLATES = [
   { id: "leads", label: "שאלון ליצירת לידים", icon: Target },
@@ -26,23 +27,31 @@ const TEMPLATES = [
 export function CreateQuizDialog({
   open,
   onOpenChange,
+  workspaceId,
+  onCreated,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  workspaceId: string;
+  onCreated?: () => void;
 }) {
   const router = useRouter();
-  const createQuiz = useQuizFlowStore((s) => s.createQuiz);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [template, setTemplate] = useState("blank");
+  const [saving, setSaving] = useState(false);
 
-  function handleCreate() {
-    if (!name.trim()) return;
-    const quiz = createQuiz({ name: name.trim(), description: description.trim() || undefined, template });
+  async function handleCreate() {
+    if (!name.trim() || saving) return;
+    setSaving(true);
+    const supabase = createClient();
+    const quiz = await createQuiz(supabase, workspaceId, { name: name.trim(), description: description.trim() || undefined });
+    setSaving(false);
     onOpenChange(false);
     setName("");
     setDescription("");
     setTemplate("blank");
+    onCreated?.();
     router.push(`/quizzes/${quiz.id}`);
   }
 
@@ -100,7 +109,8 @@ export function CreateQuizDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             ביטול
           </Button>
-          <Button onClick={handleCreate} disabled={!name.trim()}>
+          <Button onClick={handleCreate} disabled={!name.trim() || saving}>
+            {saving && <Loader2 className="size-4 animate-spin" />}
             צור שאלון
           </Button>
         </DialogFooter>

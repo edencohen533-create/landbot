@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
   ListChecks,
@@ -11,10 +11,13 @@ import {
   Moon,
   Sun,
   Sparkles,
+  LogOut,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
+import { createClient } from "@/lib/supabase/client";
 
 const NAV_ITEMS = [
   { href: "/", label: "לוח בקרה", icon: LayoutDashboard },
@@ -26,7 +29,9 @@ const NAV_ITEMS = [
 
 export function AppSidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const [dark, setDark] = useState(false);
+  const [userLabel, setUserLabel] = useState<{ name: string; email: string } | null>(null);
 
   useEffect(() => {
     const stored = localStorage.getItem("quizflow-theme");
@@ -34,6 +39,13 @@ export function AppSidebar() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- theme preference only exists in localStorage, unreadable during SSR
     setDark(isDark);
     document.documentElement.classList.toggle("dark", isDark);
+
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => {
+      if (!data.user) return;
+      const name = (data.user.user_metadata?.full_name as string | undefined) || data.user.email || "";
+      setUserLabel({ name, email: data.user.email ?? "" });
+    });
   }, []);
 
   function toggleDark(value: boolean) {
@@ -41,6 +53,15 @@ export function AppSidebar() {
     document.documentElement.classList.toggle("dark", value);
     localStorage.setItem("quizflow-theme", value ? "dark" : "light");
   }
+
+  async function handleSignOut() {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    router.push("/login");
+    router.refresh();
+  }
+
+  const initials = userLabel?.name ? userLabel.name.slice(0, 2) : "..";
 
   return (
     <aside className="hidden md:flex w-64 shrink-0 flex-col justify-between bg-sidebar text-sidebar-foreground border-s border-sidebar-border h-screen sticky top-0">
@@ -82,15 +103,18 @@ export function AppSidebar() {
           <Switch checked={dark} onCheckedChange={toggleDark} />
         </div>
         <div className="flex items-center gap-3 rounded-lg px-3 py-2">
-          <Avatar className="size-8">
+          <Avatar className="size-8 shrink-0">
             <AvatarFallback className="bg-primary/20 text-primary text-xs font-semibold">
-              עכ
+              {initials}
             </AvatarFallback>
           </Avatar>
-          <div className="leading-tight">
-            <p className="text-sm font-medium">עדן כהן</p>
-            <p className="text-xs text-sidebar-foreground/60">workspace ראשי</p>
+          <div className="leading-tight min-w-0 flex-1">
+            <p className="text-sm font-medium truncate">{userLabel?.name ?? "..."}</p>
+            <p className="text-xs text-sidebar-foreground/60 truncate">{userLabel?.email ?? ""}</p>
           </div>
+          <Button variant="ghost" size="icon" className="size-7 shrink-0 text-sidebar-foreground/70" onClick={handleSignOut} title="התנתקות">
+            <LogOut className="size-3.5" />
+          </Button>
         </div>
       </div>
     </aside>

@@ -19,13 +19,35 @@ import {
 } from "@/components/ui/select";
 import { LeadStatusBadge, CategoryBadge } from "@/components/shared/status-badges";
 import { Lead, LEAD_STATUS_LABELS, LeadStatus } from "@/lib/types";
-import { useQuizFlowStore } from "@/lib/store";
+import { createClient } from "@/lib/supabase/client";
+import { addLeadNote as addLeadNoteQuery, updateLeadStatus as updateLeadStatusQuery } from "@/lib/supabase/queries";
 import { toast } from "sonner";
 
-export function LeadDrawer({ lead, onOpenChange }: { lead: Lead | null; onOpenChange: (open: boolean) => void }) {
-  const updateLeadStatus = useQuizFlowStore((s) => s.updateLeadStatus);
-  const addLeadNote = useQuizFlowStore((s) => s.addLeadNote);
+export function LeadDrawer({
+  lead,
+  onOpenChange,
+  onUpdated,
+}: {
+  lead: Lead | null;
+  onOpenChange: (open: boolean) => void;
+  onUpdated?: () => void;
+}) {
   const [note, setNote] = useState("");
+
+  async function handleStatusChange(status: LeadStatus) {
+    if (!lead) return;
+    const supabase = createClient();
+    await updateLeadStatusQuery(supabase, lead.id, status);
+    onUpdated?.();
+  }
+
+  async function handleAddNote() {
+    if (!lead || !note.trim()) return;
+    const supabase = createClient();
+    await addLeadNoteQuery(supabase, lead.id, note.trim());
+    setNote("");
+    onUpdated?.();
+  }
 
   if (!lead) return null;
 
@@ -66,7 +88,7 @@ export function LeadDrawer({ lead, onOpenChange }: { lead: Lead | null; onOpenCh
             <p className="text-xs text-muted-foreground">סטטוס</p>
             <Select
               value={lead.status}
-              onValueChange={(v) => updateLeadStatus(lead.id, v as LeadStatus)}
+              onValueChange={(v) => v && handleStatusChange(v as LeadStatus)}
               items={LEAD_STATUS_LABELS}
             >
               <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
@@ -126,15 +148,7 @@ export function LeadDrawer({ lead, onOpenChange }: { lead: Lead | null; onOpenCh
             <div className="flex gap-2">
               <Textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="הוסף הערה..." />
             </div>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!note.trim()}
-              onClick={() => {
-                addLeadNote(lead.id, note.trim());
-                setNote("");
-              }}
-            >
+            <Button size="sm" variant="outline" disabled={!note.trim()} onClick={handleAddNote}>
               הוסף הערה
             </Button>
           </div>

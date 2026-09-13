@@ -22,7 +22,8 @@ import { nodeTypes } from "@/components/editor/nodes";
 import { RemovableEdge } from "@/components/editor/edges/removable-edge";
 import { NodePanel } from "@/components/editor/node-panel";
 import { NODE_META, TOOLBAR_NODE_TYPES } from "@/components/editor/node-meta";
-import { useQuizFlowStore } from "@/lib/store";
+import { createClient } from "@/lib/supabase/client";
+import { saveFlow as saveFlowToSupabase } from "@/lib/supabase/queries";
 import { NodeType, QuizEdge, QuizNode, QuizNodeData } from "@/lib/types";
 
 function uid(prefix: string) {
@@ -120,7 +121,7 @@ function FlowEditorInner({
   initialEdges: QuizEdge[];
   onSavedIndicator: (label: string) => void;
 }) {
-  const saveFlow = useQuizFlowStore((s) => s.saveFlow);
+  const supabase = useMemo(() => createClient(), []);
   const connectedIds = useMemo(() => computeConnected(initialNodes, initialEdges), [initialNodes, initialEdges]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(toFlowNodes(initialNodes, connectedIds));
@@ -158,11 +159,11 @@ function FlowEditorInner({
       domainEdgesRef.current = de;
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
-        saveFlow(quizId, dn, de);
+        saveFlowToSupabase(supabase, quizId, dn, de);
         onSavedIndicator("נשמר לפני רגע");
       }, 500);
     },
-    [quizId, saveFlow, toDomain, onSavedIndicator]
+    [quizId, supabase, toDomain, onSavedIndicator]
   );
 
   const pushHistory = useCallback(() => {
