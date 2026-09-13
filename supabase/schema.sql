@@ -405,15 +405,29 @@ create policy "submission_answers_owner_select" on public.submission_answers
       where s.id = submission_answers.submission_id and w.owner_id = auth.uid()
     )
   );
+-- Nested RLS pitfall: this policy's check must read quiz_submissions, but anon
+-- has no SELECT policy on that table (only the owner does), so a plain
+-- subquery here would silently see zero rows and reject every insert. Route
+-- the check through a SECURITY DEFINER function so it evaluates with the
+-- function owner's privileges instead of the caller's — it only ever returns
+-- a boolean, so no row data is exposed.
+create or replace function public.is_active_quiz_submission(p_submission_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from public.quiz_submissions s
+    join public.quizzes q on q.id = s.quiz_id
+    where s.id = p_submission_id and q.status = 'active'
+  );
+$$;
+
 drop policy if exists "submission_answers_public_insert" on public.submission_answers;
 create policy "submission_answers_public_insert" on public.submission_answers
-  for insert with check (
-    exists (
-      select 1 from public.quiz_submissions s
-      join public.quizzes q on q.id = s.quiz_id
-      where s.id = submission_answers.submission_id and q.status = 'active'
-    )
-  );
+  for insert with check (public.is_active_quiz_submission(submission_answers.submission_id));
 
 -- integrations: workspace owner only, never exposed publicly.
 drop policy if exists "integrations_owner_all" on public.integrations;

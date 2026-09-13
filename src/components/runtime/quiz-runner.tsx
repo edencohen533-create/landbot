@@ -2,91 +2,88 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { AnimatePresence, motion } from "framer-motion";
-import { ArrowRight, Check } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { Quiz, QuizNode, LeadAnswer } from "@/lib/types";
 import { getStartNode, resolveRenderable, isValidIsraeliPhone } from "@/lib/quiz-runtime";
 import { createClient } from "@/lib/supabase/client";
 import { recordAnalyticsEvent, submitPublicQuizResponse } from "@/lib/supabase/queries";
 import { triggerIntegrations } from "@/lib/integrations";
 import { Checkbox } from "@/components/ui/checkbox";
+import { SunAvatar } from "@/components/runtime/sun-avatar";
 
-function radiusFor(style: Quiz["theme"]["buttonStyle"]) {
-  return style === "square" ? 6 : style === "pill" ? 999 : 14;
+const PALETTE = {
+  page: "#F7F6EC",
+  bubbleBot: "#FFFFFF",
+  bubbleUser: "#F1EFF2",
+  buttonBorder: "#F5C85E",
+  buttonText: "#EE746C",
+  text: "#535C82",
+  muted: "#9AA0BE",
+};
+
+function timeLabel(ts: number) {
+  return new Date(ts).toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" });
 }
 
-interface StepState {
-  nodeId: string;
-  handle: string | null;
+function uid() {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+type Entry =
+  | { id: string; kind: "bot"; nodeId: string; ts: number }
+  | { id: string; kind: "result"; nodeId: string; ts: number }
+  | { id: string; kind: "user"; text: string; ts: number }
+  | { id: string; kind: "typing"; ts: number };
+
+interface LeadInfoState {
+  name: string;
+  phone: string;
+  email: string;
+  consent: boolean;
 }
 
 export function QuizRunner({ quiz }: { quiz: Quiz }) {
   const supabase = useMemo(() => createClient(), []);
   const searchParams = useSearchParams();
-  const theme = quiz.theme;
   const utmSource = searchParams.get("utm_source") ?? undefined;
   const startedRef = useRef(false);
-
-  const totalSteps = useMemo(
-    () => quiz.nodes.filter((n) => n.type === "question" || n.type === "lead_details").length,
-    [quiz.nodes]
-  );
-
-  const [history, setHistory] = useState<StepState[]>(() => {
-    const start = getStartNode(quiz);
-    const first = start ? resolveRenderable(quiz, start.id) : undefined;
-    return first ? [{ nodeId: first.id, handle: null }] : [];
-  });
-  const [answers, setAnswers] = useState<Record<string, LeadAnswer>>({});
-  const [leadInfo, setLeadInfo] = useState({ name: "", phone: "", email: "", consent: false });
-  const [submitted, setSubmitted] = useState(false);
   const submittedRef = useRef(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
-  const currentStep = history[history.length - 1];
-  const currentNode: QuizNode | undefined = quiz.nodes.find((n) => n.id === currentStep?.nodeId);
+  const firstNode = useMemo(() => {
+    const start = getStartNode(quiz);
+    return start ? resolveRenderable(quiz, start.id) : undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const score = useMemo(() => Object.values(answers).reduce((sum, a) => sum + a.score, 0), [answers]);
-  const stepIndex = useMemo(
-    () => history.filter((h) => {
-      const n = quiz.nodes.find((nn) => nn.id === h.nodeId);
-      return n?.type === "question" || n?.type === "lead_details";
-    }).length,
-    [history, quiz.nodes]
+  const [entries, setEntries] = useState<Entry[]>(() => {
+    if (!firstNode) return [];
+    if (firstNode.type === "end") return [{ id: uid(), kind: "result", nodeId: firstNode.id, ts: Date.now() }];
+    return [{ id: uid(), kind: "bot", nodeId: firstNode.id, ts: Date.now() }];
+  });
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(() =>
+    firstNode && firstNode.type !== "end" ? firstNode.id : null
   );
-  const progress = totalSteps ? Math.min((stepIndex / totalSteps) * 100, 100) : 0;
-
-  function goTo(node: QuizNode | undefined) {
-    if (!node) return;
-    setHistory((h) => [...h, { nodeId: node.id, handle: null }]);
-  }
-
-  function handleAdvance(fromId: string, handle: string | null = null) {
-    if (!startedRef.current) {
-      startedRef.current = true;
-      recordAnalyticsEvent(supabase, quiz.id, "start", utmSource);
-    }
-    const next = resolveRenderable(quiz, fromId, handle);
-    goTo(next);
-  }
-
-  function goBack() {
-    if (history.length > 1) setHistory((h) => h.slice(0, -1));
-  }
-
-  function recordAnswer(nodeId: string, answer: LeadAnswer) {
-    setAnswers((a) => ({ ...a, [nodeId]: answer }));
-  }
+  const [answers, setAnswers] = useState<Record<string, LeadAnswer>>({});
+  const [leadInfo, setLeadInfo] = useState<LeadInfoState>({ name: "", phone: "", email: "", consent: false });
 
   useEffect(() => {
     recordAnalyticsEvent(supabase, quiz.id, "view", utmSource);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function submitLead() {
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [entries.length]);
+
+  function scrollToBottom() {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }
+
+  async function submitLead(finalAnswers: Record<string, LeadAnswer>, finalScore: number) {
     if (submittedRef.current) return;
     submittedRef.current = true;
-    setSubmitted(true);
-    const category = score >= 26 ? "hot" : score >= 16 ? "warm" : "cold";
+    const category = finalScore >= 26 ? "hot" : finalScore >= 16 ? "warm" : "cold";
     const leadId = await submitPublicQuizResponse(
       supabase,
       quiz,
@@ -94,205 +91,244 @@ export function QuizRunner({ quiz }: { quiz: Quiz }) {
         name: leadInfo.name || "ללא שם",
         phone: leadInfo.phone,
         email: leadInfo.email,
-        score,
+        score: finalScore,
         category,
         utmSource,
         utmMedium: searchParams.get("utm_medium") ?? undefined,
         utmCampaign: searchParams.get("utm_campaign") ?? undefined,
       },
-      Object.values(answers)
+      Object.values(finalAnswers)
     );
     recordAnalyticsEvent(supabase, quiz.id, "complete", utmSource);
     triggerIntegrations(leadId);
   }
 
-  useEffect(() => {
-    if (currentNode?.type === "end" && !submittedRef.current && (leadInfo.phone || leadInfo.email || leadInfo.name)) {
-      submitLead();
+  function advanceTo(fromId: string, handle: string | null, answerForScore?: LeadAnswer) {
+    if (!startedRef.current) {
+      startedRef.current = true;
+      recordAnalyticsEvent(supabase, quiz.id, "start", utmSource);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentNode?.id]);
+    const next = resolveRenderable(quiz, fromId, handle);
+    setActiveNodeId(null);
+    if (!next) return;
 
-  const cardStyle: React.CSSProperties = {
-    background: theme.overlay === "dark" ? "rgba(255,255,255,0.97)" : "#ffffff",
-    color: theme.textColor,
-    borderRadius: 20,
-  };
+    const mergedAnswers = answerForScore ? { ...answers, [answerForScore.nodeId]: answerForScore } : answers;
+    const mergedScore = Object.values(mergedAnswers).reduce((sum, a) => sum + a.score, 0);
 
-  const containerStyle: React.CSSProperties = {
-    background: theme.backgroundImageUrl
-      ? `${theme.overlay === "dark" ? "linear-gradient(rgba(0,0,0,.55),rgba(0,0,0,.55))," : theme.overlay === "light" ? "linear-gradient(rgba(255,255,255,.4),rgba(255,255,255,.4))," : ""}url(${theme.backgroundImageUrl}) center/cover no-repeat`
-      : theme.backgroundColor,
-  };
+    const typingId = uid();
+    setEntries((es) => [...es, { id: typingId, kind: "typing", ts: Date.now() }]);
+    setTimeout(() => {
+      setEntries((es) => {
+        const withoutTyping = es.filter((e) => e.id !== typingId);
+        if (next.type === "end") {
+          return [...withoutTyping, { id: uid(), kind: "result", nodeId: next.id, ts: Date.now() }];
+        }
+        return [...withoutTyping, { id: uid(), kind: "bot", nodeId: next.id, ts: Date.now() }];
+      });
+      if (next.type === "end") {
+        if (leadInfo.phone || leadInfo.email || leadInfo.name) submitLead(mergedAnswers, mergedScore);
+      } else {
+        setActiveNodeId(next.id);
+      }
+    }, 650);
+  }
 
-  const justify = theme.cardPosition === "right" ? "flex-end" : theme.cardPosition === "left" ? "flex-start" : "center";
+  function handleComplete(node: QuizNode, userText: string, handle: string | null, answer?: LeadAnswer) {
+    if (answer) setAnswers((a) => ({ ...a, [node.id]: answer }));
+    setEntries((es) => [...es, { id: uid(), kind: "user", text: userText, ts: Date.now() }]);
+    advanceTo(node.id, handle, answer);
+  }
 
-  if (!currentNode) {
+  if (!firstNode) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-center p-6" style={containerStyle}>
-        <p style={{ color: theme.textColor }}>השאלון עדיין לא כולל תוכן.</p>
+      <div className="min-h-screen flex items-center justify-center text-center p-6" style={{ background: PALETTE.page }}>
+        <p style={{ color: PALETTE.text }}>השאלון עדיין לא כולל תוכן.</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex flex-col p-4" style={containerStyle}>
-      <div className="flex-1 flex" style={{ justifyContent: justify, alignItems: "center" }}>
-        <div className="w-full max-w-md">
-          {theme.showProgressBar && totalSteps > 0 && (
-            <div className="h-1.5 rounded-full bg-black/10 overflow-hidden mb-4 mx-1">
-              <motion.div
-                className="h-full"
-                style={{ background: theme.primaryColor }}
-                animate={{ width: `${progress}%` }}
-                transition={{ duration: 0.35 }}
-              />
-            </div>
-          )}
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={currentNode.id}
-              initial={{ opacity: 0, x: 16 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -16 }}
-              transition={{ duration: 0.25 }}
-              className="p-6 shadow-xl"
-              style={cardStyle}
-            >
-              {theme.logoUrl && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={theme.logoUrl} alt="" className="h-8 mb-4 mx-auto object-contain" />
-              )}
-              {theme.showQuestionNumber && (currentNode.type === "question" || currentNode.type === "lead_details") && totalSteps > 0 && (
-                <p className="text-xs opacity-60 mb-2">שאלה {stepIndex} מתוך {totalSteps}</p>
-              )}
-
-              {currentNode.data.kind === "message" && (
-                <div className="space-y-4 text-center">
-                  <h1 className="text-xl font-bold">{currentNode.data.title}</h1>
-                  <p className="opacity-80 leading-relaxed">{currentNode.data.text}</p>
-                  <button
-                    className="w-full py-3 font-semibold text-white transition-transform active:scale-[0.98]"
-                    style={{ background: theme.primaryColor, borderRadius: radiusFor(theme.buttonStyle) }}
-                    onClick={() => handleAdvance(currentNode.id, null)}
-                  >
-                    {currentNode.data.buttonLabel || "המשך"}
-                  </button>
-                </div>
-              )}
-
-              {currentNode.data.kind === "question" && (
-                <QuestionStep
-                  node={currentNode}
-                  theme={theme}
-                  onAnswer={(answer, handle) => {
-                    recordAnswer(currentNode.id, answer);
-                    handleAdvance(currentNode.id, handle);
-                  }}
-                />
-              )}
-
-              {currentNode.data.kind === "lead_details" && (
-                <LeadDetailsStep
-                  node={currentNode}
-                  theme={theme}
-                  leadInfo={leadInfo}
-                  setLeadInfo={setLeadInfo}
-                  onSubmit={() => handleAdvance(currentNode.id, null)}
-                />
-              )}
-
-              {currentNode.data.kind === "end" && <EndStep node={currentNode} theme={theme} />}
-            </motion.div>
-          </AnimatePresence>
-
-          {quiz.allowBack && history.length > 1 && currentNode.type !== "end" && (
-            <button
-              onClick={goBack}
-              className="mt-3 flex items-center gap-1 text-xs opacity-70 hover:opacity-100 mx-1"
-              style={{ color: theme.overlay || theme.backgroundImageUrl ? "#fff" : theme.textColor }}
-            >
-              <ArrowRight className="size-3.5" />
-              חזרה לשאלה קודמת
-            </button>
+    <div dir="rtl" className="min-h-screen" style={{ background: PALETTE.page }}>
+      <div className="mx-auto max-w-2xl px-4 pb-32 pt-6 sm:px-6">
+        <div className="mb-6 flex items-center justify-center rounded-[28px] bg-white py-8 shadow-sm">
+          {quiz.theme.logoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={quiz.theme.logoUrl} alt={quiz.name} className="h-14 object-contain" />
+          ) : (
+            <p className="text-2xl font-bold" style={{ color: PALETTE.text }}>{quiz.name}</p>
           )}
         </div>
+
+        <div className="space-y-5">
+          {entries.map((entry) => {
+            if (entry.kind === "user") {
+              return (
+                <div key={entry.id} className="flex flex-col items-start gap-1">
+                  <div
+                    className="max-w-[75%] rounded-[20px] px-5 py-3 leading-relaxed"
+                    style={{ background: PALETTE.bubbleUser, color: PALETTE.text }}
+                  >
+                    {entry.text}
+                  </div>
+                  <span className="px-1 text-xs" style={{ color: PALETTE.muted }}>{timeLabel(entry.ts)}</span>
+                </div>
+              );
+            }
+
+            if (entry.kind === "typing") {
+              return (
+                <div key={entry.id} className="flex items-end justify-start gap-2">
+                  <div className="flex items-center gap-1.5 rounded-[22px] bg-white px-5 py-4" style={{ background: PALETTE.bubbleBot }}>
+                    <span className="size-2 animate-bounce rounded-full bg-current" style={{ color: PALETTE.muted }} />
+                    <span className="size-2 animate-bounce rounded-full bg-current [animation-delay:0.15s]" style={{ color: PALETTE.muted }} />
+                    <span className="size-2 animate-bounce rounded-full bg-current [animation-delay:0.3s]" style={{ color: PALETTE.muted }} />
+                  </div>
+                  <SunAvatar />
+                </div>
+              );
+            }
+
+            if (entry.kind === "result") {
+              const node = quiz.nodes.find((n) => n.id === entry.nodeId);
+              if (!node || node.data.kind !== "end") return null;
+              return <ResultCard key={entry.id} data={node.data} />;
+            }
+
+            const node = quiz.nodes.find((n) => n.id === entry.nodeId);
+            if (!node) return null;
+            const isActive = entry.nodeId === activeNodeId;
+
+            return (
+              <div key={entry.id} className="flex flex-col items-end gap-1">
+                <div className="flex items-end gap-2">
+                  <div
+                    className="max-w-[85%] rounded-[22px] px-5 py-4 leading-relaxed"
+                    style={{ background: PALETTE.bubbleBot, color: PALETTE.text }}
+                  >
+                    <BotNodeContent node={node} />
+                    {isActive && (
+                      <div className="mt-4">
+                        <NodeControls
+                          node={node}
+                          leadInfo={leadInfo}
+                          onLeadInfoChange={(patch) => setLeadInfo((s) => ({ ...s, ...patch }))}
+                          onComplete={(text, handle, answer) => handleComplete(node, text, handle, answer)}
+                        />
+                      </div>
+                    )}
+                  </div>
+                  <SunAvatar />
+                </div>
+                <span className="px-1 text-xs" style={{ color: PALETTE.muted }}>{timeLabel(entry.ts)}</span>
+              </div>
+            );
+          })}
+          <div ref={bottomRef} />
+        </div>
       </div>
-      {submitted && currentNode.type === "end" && (
-        <p className="text-center text-[10px] opacity-40 pb-2" style={{ color: "#fff" }}>QuizFlow</p>
-      )}
+
+      <button
+        onClick={scrollToBottom}
+        className="fixed bottom-6 left-1/2 flex size-11 -translate-x-1/2 items-center justify-center rounded-full bg-white shadow-lg"
+        style={{ color: PALETTE.buttonText }}
+        aria-label="גלול למטה"
+      >
+        <ChevronDown className="size-5" />
+      </button>
     </div>
   );
 }
 
-function QuestionStep({
+function BotNodeContent({ node }: { node: QuizNode }) {
+  if (node.data.kind === "message") {
+    return (
+      <div className="space-y-2 whitespace-pre-line">
+        {node.data.title && <p className="font-bold">{node.data.title}</p>}
+        <p>{node.data.text}</p>
+      </div>
+    );
+  }
+  if (node.data.kind === "question") {
+    return (
+      <div>
+        <p className="font-bold">{node.data.title}</p>
+        {node.data.description && <p className="mt-1 text-sm opacity-80">{node.data.description}</p>}
+      </div>
+    );
+  }
+  if (node.data.kind === "lead_details") {
+    return <p className="font-bold">השאירו פרטים ונחזור אליכם</p>;
+  }
+  return null;
+}
+
+function NodeControls({
   node,
-  theme,
-  onAnswer,
+  leadInfo,
+  onLeadInfoChange,
+  onComplete,
 }: {
   node: QuizNode;
-  theme: Quiz["theme"];
-  onAnswer: (answer: LeadAnswer, handle: string | null) => void;
+  leadInfo: LeadInfoState;
+  onLeadInfoChange: (patch: Partial<LeadInfoState>) => void;
+  onComplete: (userText: string, handle: string | null, answer?: LeadAnswer) => void;
 }) {
-  const data = node.data as Extract<QuizNode["data"], { kind: "question" }>;
   const [text, setText] = useState("");
   const [multi, setMulti] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
-  function submitFreeform() {
-    if (!text.trim() && data.required) return;
-    onAnswer({ nodeId: node.id, questionTitle: data.title, answerLabel: text || "—", score: data.answerType === "rating" ? Number(text) || 0 : 0 }, null);
-    setText("");
+  if (node.data.kind === "message") {
+    const data = node.data;
+    return (
+      <button
+        onClick={() => onComplete(data.buttonLabel || "המשך", null)}
+        className="rounded-lg border-2 bg-white px-6 py-2.5 text-sm font-semibold transition-transform active:scale-[0.97]"
+        style={{ borderColor: PALETTE.buttonBorder, color: PALETTE.buttonText }}
+      >
+        {data.buttonLabel || "המשך"}
+      </button>
+    );
   }
 
-  function submitMulti() {
-    if (multi.length === 0 && data.required) return;
-    const labels = data.options.filter((o) => multi.includes(o.id)).map((o) => o.label).join(", ");
-    const totalScore = data.options.filter((o) => multi.includes(o.id)).reduce((s, o) => s + o.score, 0);
-    onAnswer({ nodeId: node.id, questionTitle: data.title, answerLabel: labels || "—", score: totalScore }, multi[0] ?? null);
-  }
+  if (node.data.kind === "question") {
+    const data = node.data;
 
-  return (
-    <div className="space-y-4">
-      <div>
-        <h2 className="text-lg font-bold">{data.title}</h2>
-        {data.description && <p className="text-sm opacity-70 mt-1">{data.description}</p>}
-      </div>
-
-      {data.answerType === "single_choice" && (
+    if (data.answerType === "single_choice") {
+      return (
         <div className="space-y-2">
-          {data.options.map((opt) => (
-            <button
-              key={opt.id}
-              className="w-full text-start px-4 py-3 border font-medium transition-colors hover:brightness-95"
-              style={{ borderRadius: radiusFor(theme.buttonStyle), borderColor: `${theme.primaryColor}55` }}
-              onClick={() =>
-                onAnswer({ nodeId: node.id, questionTitle: data.title, answerLabel: opt.label, score: opt.score }, opt.id)
-              }
-            >
-              {opt.label}
-            </button>
-          ))}
+          <p className="text-xs" style={{ color: PALETTE.muted }}>בחר/י תשובה</p>
+          <div className="grid grid-cols-2 gap-2.5 sm:flex sm:flex-wrap">
+            {data.options.map((opt) => (
+              <button
+                key={opt.id}
+                onClick={() =>
+                  onComplete(opt.label, opt.id, { nodeId: node.id, questionTitle: data.title, answerLabel: opt.label, score: opt.score })
+                }
+                className="rounded-lg border-2 bg-white px-4 py-3 text-sm font-semibold transition-transform active:scale-[0.97] sm:min-w-[140px] sm:basis-[31%] sm:grow-0"
+                style={{ borderColor: PALETTE.buttonBorder, color: PALETTE.buttonText }}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
         </div>
-      )}
+      );
+    }
 
-      {data.answerType === "multi_choice" && (
-        <div className="space-y-3">
-          <div className="space-y-2">
+    if (data.answerType === "multi_choice") {
+      return (
+        <div className="space-y-2">
+          <p className="text-xs" style={{ color: PALETTE.muted }}>ניתן לבחור כמה תשובות</p>
+          <div className="grid grid-cols-2 gap-2.5 sm:flex sm:flex-wrap">
             {data.options.map((opt) => {
               const checked = multi.includes(opt.id);
               return (
                 <button
                   key={opt.id}
                   type="button"
-                  onClick={() =>
-                    setMulti((m) => (checked ? m.filter((id) => id !== opt.id) : [...m, opt.id]))
-                  }
-                  className="w-full flex items-center gap-2 text-start px-4 py-3 border font-medium transition-colors"
-                  style={{
-                    borderRadius: radiusFor(theme.buttonStyle),
-                    borderColor: checked ? theme.primaryColor : `${theme.primaryColor}33`,
-                    background: checked ? `${theme.primaryColor}14` : "transparent",
-                  }}
+                  onClick={() => setMulti((m) => (checked ? m.filter((id) => id !== opt.id) : [...m, opt.id]))}
+                  className="flex items-center gap-2 rounded-lg border-2 bg-white px-4 py-3 text-sm font-semibold sm:min-w-[140px] sm:basis-[31%] sm:grow-0"
+                  style={{ borderColor: checked ? PALETTE.buttonText : PALETTE.buttonBorder, color: PALETTE.buttonText }}
                 >
                   <Checkbox checked={checked} />
                   {opt.label}
@@ -301,64 +337,45 @@ function QuestionStep({
             })}
           </div>
           <button
-            className="w-full py-3 font-semibold text-white"
-            style={{ background: theme.primaryColor, borderRadius: radiusFor(theme.buttonStyle) }}
-            onClick={submitMulti}
+            className="w-full rounded-lg py-3 text-sm font-semibold text-white disabled:opacity-50"
+            style={{ background: PALETTE.buttonText }}
+            disabled={data.required && multi.length === 0}
+            onClick={() => {
+              const labels = data.options.filter((o) => multi.includes(o.id)).map((o) => o.label).join(", ");
+              const totalScore = data.options.filter((o) => multi.includes(o.id)).reduce((s, o) => s + o.score, 0);
+              onComplete(labels || "—", multi[0] ?? null, { nodeId: node.id, questionTitle: data.title, answerLabel: labels || "—", score: totalScore });
+            }}
           >
             המשך
           </button>
         </div>
-      )}
+      );
+    }
 
-      {(data.answerType === "short_text" || data.answerType === "number" || data.answerType === "date") && (
-        <div className="space-y-3">
-          <input
-            type={data.answerType === "number" ? "number" : data.answerType === "date" ? "date" : "text"}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            className="w-full px-4 py-3 border rounded-xl outline-none focus:ring-2"
-            style={{ borderRadius: radiusFor(theme.buttonStyle) }}
-          />
-          <button
-            className="w-full py-3 font-semibold text-white"
-            style={{ background: theme.primaryColor, borderRadius: radiusFor(theme.buttonStyle) }}
-            onClick={submitFreeform}
-          >
-            המשך
-          </button>
-        </div>
-      )}
+    const submitFreeform = () => {
+      if (!text.trim() && data.required) return;
+      onComplete(text || "—", null, {
+        nodeId: node.id,
+        questionTitle: data.title,
+        answerLabel: text || "—",
+        score: data.answerType === "rating" ? Number(text) || 0 : 0,
+      });
+      setText("");
+    };
 
-      {data.answerType === "long_text" && (
-        <div className="space-y-3">
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            rows={4}
-            className="w-full px-4 py-3 border rounded-xl outline-none focus:ring-2"
-          />
-          <button
-            className="w-full py-3 font-semibold text-white"
-            style={{ background: theme.primaryColor, borderRadius: radiusFor(theme.buttonStyle) }}
-            onClick={submitFreeform}
-          >
-            המשך
-          </button>
-        </div>
-      )}
-
-      {data.answerType === "rating" && (
-        <div className="space-y-3">
+    if (data.answerType === "rating") {
+      return (
+        <div className="space-y-2">
           <div className="grid grid-cols-5 gap-2">
             {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
               <button
                 key={n}
                 onClick={() => setText(String(n))}
-                className="aspect-square rounded-lg border font-semibold"
+                className="aspect-square rounded-lg border-2 text-sm font-semibold"
                 style={{
-                  background: text === String(n) ? theme.primaryColor : "transparent",
-                  color: text === String(n) ? "#fff" : undefined,
-                  borderColor: `${theme.primaryColor}55`,
+                  borderColor: PALETTE.buttonBorder,
+                  background: text === String(n) ? PALETTE.buttonText : "white",
+                  color: text === String(n) ? "white" : PALETTE.buttonText,
                 }}
               >
                 {n}
@@ -366,106 +383,112 @@ function QuestionStep({
             ))}
           </div>
           <button
-            className="w-full py-3 font-semibold text-white"
-            style={{ background: theme.primaryColor, borderRadius: radiusFor(theme.buttonStyle) }}
+            className="w-full rounded-lg py-3 text-sm font-semibold text-white disabled:opacity-50"
+            style={{ background: PALETTE.buttonText }}
             onClick={submitFreeform}
             disabled={!text}
           >
             המשך
           </button>
         </div>
-      )}
-    </div>
-  );
-}
-
-function LeadDetailsStep({
-  node,
-  theme,
-  leadInfo,
-  setLeadInfo,
-  onSubmit,
-}: {
-  node: QuizNode;
-  theme: Quiz["theme"];
-  leadInfo: { name: string; phone: string; email: string; consent: boolean };
-  setLeadInfo: React.Dispatch<React.SetStateAction<{ name: string; phone: string; email: string; consent: boolean }>>;
-  onSubmit: () => void;
-}) {
-  const data = node.data as Extract<QuizNode["data"], { kind: "lead_details" }>;
-  const [error, setError] = useState<string | null>(null);
-
-  function handleSubmit() {
-    if (data.showPhone && data.requirePhoneIL && !isValidIsraeliPhone(leadInfo.phone)) {
-      setError("מספר טלפון לא תקין");
-      return;
+      );
     }
-    if (data.showConsent && !leadInfo.consent) {
-      setError("יש לאשר את תנאי ההסכמה כדי להמשיך");
-      return;
-    }
-    setError(null);
-    onSubmit();
+
+    return (
+      <div className="space-y-2">
+        {data.answerType === "long_text" ? (
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={3}
+            className="w-full rounded-lg border px-4 py-2.5 text-sm outline-none focus:ring-2"
+            style={{ borderColor: PALETTE.buttonBorder }}
+          />
+        ) : (
+          <input
+            type={data.answerType === "number" ? "number" : data.answerType === "date" ? "date" : "text"}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            className="w-full rounded-lg border px-4 py-2.5 text-sm outline-none focus:ring-2"
+            style={{ borderColor: PALETTE.buttonBorder }}
+          />
+        )}
+        <button
+          className="w-full rounded-lg py-3 text-sm font-semibold text-white"
+          style={{ background: PALETTE.buttonText }}
+          onClick={submitFreeform}
+        >
+          המשך
+        </button>
+      </div>
+    );
   }
 
-  const inputStyle: React.CSSProperties = { borderRadius: radiusFor(theme.buttonStyle) };
+  if (node.data.kind === "lead_details") {
+    const data = node.data;
 
-  return (
-    <div className="space-y-3">
-      <h2 className="text-lg font-bold">השאירו פרטים ונחזור אליכם</h2>
-      {data.showName && (
-        <input
-          placeholder="שם מלא"
-          value={leadInfo.name}
-          onChange={(e) => setLeadInfo((s) => ({ ...s, name: e.target.value }))}
-          className="w-full px-4 py-3 border outline-none focus:ring-2"
-          style={inputStyle}
-        />
-      )}
-      {data.showPhone && (
-        <input
-          placeholder="טלפון"
-          dir="ltr"
-          value={leadInfo.phone}
-          onChange={(e) => setLeadInfo((s) => ({ ...s, phone: e.target.value }))}
-          className="w-full px-4 py-3 border outline-none focus:ring-2 text-end"
-          style={inputStyle}
-        />
-      )}
-      {data.showEmail && (
-        <input
-          placeholder="אימייל"
-          dir="ltr"
-          value={leadInfo.email}
-          onChange={(e) => setLeadInfo((s) => ({ ...s, email: e.target.value }))}
-          className="w-full px-4 py-3 border outline-none focus:ring-2 text-end"
-          style={inputStyle}
-        />
-      )}
-      {data.showConsent && (
-        <label className="flex items-start gap-2 text-xs opacity-80 cursor-pointer">
-          <Checkbox
-            checked={leadInfo.consent}
-            onCheckedChange={(v) => setLeadInfo((s) => ({ ...s, consent: !!v }))}
-            className="mt-0.5"
+    function handleSubmit() {
+      if (data.showPhone && data.requirePhoneIL && !isValidIsraeliPhone(leadInfo.phone)) {
+        setError("מספר טלפון לא תקין");
+        return;
+      }
+      if (data.showConsent && !leadInfo.consent) {
+        setError("יש לאשר את תנאי ההסכמה כדי להמשיך");
+        return;
+      }
+      setError(null);
+      onComplete(leadInfo.name || "הפרטים נשלחו", null);
+    }
+
+    return (
+      <div className="space-y-2.5">
+        {data.showName && (
+          <input
+            placeholder="שם מלא"
+            value={leadInfo.name}
+            onChange={(e) => onLeadInfoChange({ name: e.target.value })}
+            className="w-full rounded-lg border px-4 py-2.5 text-sm outline-none focus:ring-2"
+            style={{ borderColor: PALETTE.buttonBorder }}
           />
-          {data.consentText}
-        </label>
-      )}
-      {error && <p className="text-xs text-red-500">{error}</p>}
-      <button
-        className="w-full py-3 font-semibold text-white"
-        style={{ background: theme.primaryColor, borderRadius: radiusFor(theme.buttonStyle) }}
-        onClick={handleSubmit}
-      >
-        שליחה
-      </button>
-    </div>
-  );
+        )}
+        {data.showPhone && (
+          <input
+            placeholder="טלפון"
+            dir="ltr"
+            value={leadInfo.phone}
+            onChange={(e) => onLeadInfoChange({ phone: e.target.value })}
+            className="w-full rounded-lg border px-4 py-2.5 text-end text-sm outline-none focus:ring-2"
+            style={{ borderColor: PALETTE.buttonBorder }}
+          />
+        )}
+        {data.showEmail && (
+          <input
+            placeholder="אימייל"
+            dir="ltr"
+            value={leadInfo.email}
+            onChange={(e) => onLeadInfoChange({ email: e.target.value })}
+            className="w-full rounded-lg border px-4 py-2.5 text-end text-sm outline-none focus:ring-2"
+            style={{ borderColor: PALETTE.buttonBorder }}
+          />
+        )}
+        {data.showConsent && (
+          <label className="flex items-start gap-2 text-xs cursor-pointer" style={{ color: PALETTE.muted }}>
+            <Checkbox checked={leadInfo.consent} onCheckedChange={(v) => onLeadInfoChange({ consent: !!v })} className="mt-0.5" />
+            {data.consentText}
+          </label>
+        )}
+        {error && <p className="text-xs text-red-500">{error}</p>}
+        <button className="w-full rounded-lg py-3 text-sm font-semibold text-white" style={{ background: PALETTE.buttonText }} onClick={handleSubmit}>
+          שליחה
+        </button>
+      </div>
+    );
+  }
+
+  return null;
 }
 
-function EndStep({ node, theme }: { node: QuizNode; theme: Quiz["theme"] }) {
-  const data = node.data as Extract<QuizNode["data"], { kind: "end" }>;
+function ResultCard({ data }: { data: Extract<QuizNode["data"], { kind: "end" }> }) {
   const shouldRedirect = !!(data.redirectEnabled && data.redirectUrl);
   const [secondsLeft, setSecondsLeft] = useState(data.redirectDelaySeconds ?? 3);
 
@@ -480,29 +503,31 @@ function EndStep({ node, theme }: { node: QuizNode; theme: Quiz["theme"] }) {
   }, [shouldRedirect, secondsLeft, data.redirectUrl]);
 
   return (
-    <div className="space-y-4 text-center">
+    <div className="flex justify-end">
       <div
-        className="mx-auto flex size-12 items-center justify-center rounded-full"
-        style={{ background: `${theme.primaryColor}22`, color: theme.primaryColor }}
+        className="max-w-[92%] rounded-[24px] border-2 bg-white p-6 text-center shadow-md sm:max-w-[85%]"
+        style={{ borderColor: PALETTE.buttonBorder, color: PALETTE.text }}
       >
-        <Check className="size-6" />
+        <div className="mb-3 flex justify-center">
+          <SunAvatar size={48} />
+        </div>
+        <h2 className="text-xl font-bold">{data.title}</h2>
+        <p className="mt-2 leading-relaxed">{data.text}</p>
+        {shouldRedirect && (
+          <p className="mt-3 text-xs" style={{ color: PALETTE.muted }}>מעביר אותך אוטומטית תוך {secondsLeft} שניות...</p>
+        )}
+        {data.ctaLabel && data.ctaUrl && (
+          <a
+            href={data.ctaUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-4 block rounded-lg border-2 bg-white py-3 text-sm font-semibold"
+            style={{ borderColor: PALETTE.buttonBorder, color: PALETTE.buttonText }}
+          >
+            {data.ctaLabel}
+          </a>
+        )}
       </div>
-      <h1 className="text-xl font-bold">{data.title}</h1>
-      <p className="opacity-80 leading-relaxed">{data.text}</p>
-      {shouldRedirect && (
-        <p className="text-xs opacity-60">מעביר אותך אוטומטית תוך {secondsLeft} שניות...</p>
-      )}
-      {data.ctaLabel && data.ctaUrl && (
-        <a
-          href={data.ctaUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-block w-full py-3 font-semibold text-white"
-          style={{ background: theme.primaryColor, borderRadius: radiusFor(theme.buttonStyle) }}
-        >
-          {data.ctaLabel}
-        </a>
-      )}
     </div>
   );
 }

@@ -306,15 +306,14 @@ export async function submitPublicQuizResponse(
   });
 
   if (answers.length) {
-    await supabase.from("submission_answers").insert(
-      answers.map((a) => ({
-        submission_id: submissionId,
-        node_id: a.nodeId,
-        question_title: a.questionTitle,
-        answer_label: a.answerLabel,
-        score: a.score,
-      }))
-    );
+    // submission_answers' RLS check needs to read quiz_submissions, which anon
+    // has no SELECT policy on (nested-RLS gap) — route this write through a
+    // server route holding the service-role key instead of inserting directly.
+    await fetch("/api/save-answers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ submissionId, answers }),
+    }).catch(() => {});
   }
 
   return leadId;
