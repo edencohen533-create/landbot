@@ -4,7 +4,11 @@ import { fetchQuizFullBySlug } from "@/lib/supabase/queries";
 import { QuizRunner } from "@/components/runtime/quiz-runner";
 
 export default async function PublicQuizPage({ params }: { params: Promise<{ slug: string }> }) {
-  const { slug } = await params;
+  const { slug: rawSlug } = await params;
+  // Next.js does not URL-decode dynamic route segments, so a Hebrew slug
+  // (the default for a Hebrew-named quiz) arrives here still percent-encoded
+  // and would never match the plain slug stored in the database.
+  const slug = decodeURIComponent(rawSlug);
   const supabase = await createClient();
   const quiz = await fetchQuizFullBySlug(supabase, slug);
 

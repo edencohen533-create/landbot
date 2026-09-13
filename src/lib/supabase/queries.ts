@@ -93,7 +93,11 @@ export async function fetchQuizFull(supabase: SupabaseClient, quizId: string): P
 }
 
 export async function fetchQuizFullBySlug(supabase: SupabaseClient, slug: string): Promise<Quiz | null> {
-  const { data: quizRow, error } = await supabase.from("quizzes").select("*").eq("slug", slug).eq("status", "active").maybeSingle();
+  // no status filter here: RLS already restricts anonymous visitors to
+  // active quizzes (quizzes_public_read_active) while letting the owner
+  // see their own quiz regardless of status (quizzes_owner_all) — this is
+  // what makes "preview" work for draft/paused quizzes.
+  const { data: quizRow, error } = await supabase.from("quizzes").select("*").eq("slug", slug).maybeSingle();
   if (error) throw error;
   if (!quizRow) return null;
   const { nodeRows, edgeRows, themeRow } = await fetchQuizFlow(supabase, quizRow.id);
