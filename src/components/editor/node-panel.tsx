@@ -359,6 +359,33 @@ function EndForm({ data, onChange }: { data: EndNodeData; onChange: (d: QuizNode
       <Field label="קישור CTA">
         <Input value={data.ctaUrl ?? ""} onChange={(e) => onChange({ ...data, ctaUrl: e.target.value })} placeholder="https://" />
       </Field>
+      <div className="flex items-center justify-between pt-2 border-t">
+        <Label className="text-xs text-muted-foreground">הפניה אוטומטית לאתר בסיום</Label>
+        <Switch
+          checked={data.redirectEnabled ?? false}
+          onCheckedChange={(v) => onChange({ ...data, redirectEnabled: v })}
+        />
+      </div>
+      {data.redirectEnabled && (
+        <>
+          <Field label="כתובת ההפניה">
+            <Input
+              value={data.redirectUrl ?? ""}
+              onChange={(e) => onChange({ ...data, redirectUrl: e.target.value })}
+              placeholder="https://"
+              dir="ltr"
+            />
+          </Field>
+          <Field label="השהיה לפני ההפניה (שניות)">
+            <Input
+              type="number"
+              min={0}
+              value={data.redirectDelaySeconds ?? 3}
+              onChange={(e) => onChange({ ...data, redirectDelaySeconds: Number(e.target.value) || 0 })}
+            />
+          </Field>
+        </>
+      )}
     </>
   );
 }

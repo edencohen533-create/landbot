@@ -186,29 +186,7 @@ export function QuizRunner({ quiz }: { quiz: Quiz }) {
                 />
               )}
 
-              {currentNode.data.kind === "end" && (
-                <div className="space-y-4 text-center">
-                  <div
-                    className="mx-auto flex size-12 items-center justify-center rounded-full"
-                    style={{ background: `${theme.primaryColor}22`, color: theme.primaryColor }}
-                  >
-                    <Check className="size-6" />
-                  </div>
-                  <h1 className="text-xl font-bold">{currentNode.data.title}</h1>
-                  <p className="opacity-80 leading-relaxed">{currentNode.data.text}</p>
-                  {currentNode.data.ctaLabel && currentNode.data.ctaUrl && (
-                    <a
-                      href={currentNode.data.ctaUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-block w-full py-3 font-semibold text-white"
-                      style={{ background: theme.primaryColor, borderRadius: radiusFor(theme.buttonStyle) }}
-                    >
-                      {currentNode.data.ctaLabel}
-                    </a>
-                  )}
-                </div>
-              )}
+              {currentNode.data.kind === "end" && <EndStep node={currentNode} theme={theme} />}
             </motion.div>
           </AnimatePresence>
 
@@ -466,6 +444,49 @@ function LeadDetailsStep({
       >
         שליחה
       </button>
+    </div>
+  );
+}
+
+function EndStep({ node, theme }: { node: QuizNode; theme: Quiz["theme"] }) {
+  const data = node.data as Extract<QuizNode["data"], { kind: "end" }>;
+  const shouldRedirect = !!(data.redirectEnabled && data.redirectUrl);
+  const [secondsLeft, setSecondsLeft] = useState(data.redirectDelaySeconds ?? 3);
+
+  useEffect(() => {
+    if (!shouldRedirect) return;
+    if (secondsLeft <= 0) {
+      window.location.href = data.redirectUrl!;
+      return;
+    }
+    const timer = setTimeout(() => setSecondsLeft((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [shouldRedirect, secondsLeft, data.redirectUrl]);
+
+  return (
+    <div className="space-y-4 text-center">
+      <div
+        className="mx-auto flex size-12 items-center justify-center rounded-full"
+        style={{ background: `${theme.primaryColor}22`, color: theme.primaryColor }}
+      >
+        <Check className="size-6" />
+      </div>
+      <h1 className="text-xl font-bold">{data.title}</h1>
+      <p className="opacity-80 leading-relaxed">{data.text}</p>
+      {shouldRedirect && (
+        <p className="text-xs opacity-60">מעביר אותך אוטומטית תוך {secondsLeft} שניות...</p>
+      )}
+      {data.ctaLabel && data.ctaUrl && (
+        <a
+          href={data.ctaUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-block w-full py-3 font-semibold text-white"
+          style={{ background: theme.primaryColor, borderRadius: radiusFor(theme.buttonStyle) }}
+        >
+          {data.ctaLabel}
+        </a>
+      )}
     </div>
   );
 }

@@ -106,6 +106,9 @@ export interface EndNodeData {
   text: string;
   ctaLabel?: string;
   ctaUrl?: string;
+  redirectEnabled?: boolean;
+  redirectUrl?: string;
+  redirectDelaySeconds?: number;
 }
 
 export type QuizNodeData =

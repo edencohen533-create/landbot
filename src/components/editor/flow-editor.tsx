@@ -19,6 +19,7 @@ import "reactflow/dist/style.css";
 import { Undo2, Redo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { nodeTypes } from "@/components/editor/nodes";
+import { RemovableEdge } from "@/components/editor/edges/removable-edge";
 import { NodePanel } from "@/components/editor/node-panel";
 import { NODE_META, TOOLBAR_NODE_TYPES } from "@/components/editor/node-meta";
 import { useQuizFlowStore } from "@/lib/store";
@@ -27,6 +28,8 @@ import { NodeType, QuizEdge, QuizNode, QuizNodeData } from "@/lib/types";
 function uid(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
 }
+
+const edgeTypes = { removable: RemovableEdge };
 
 function defaultDataFor(type: NodeType): QuizNodeData {
   switch (type) {
@@ -85,7 +88,7 @@ function toFlowEdges(edges: QuizEdge[]): Edge[] {
     source: e.source,
     sourceHandle: e.sourceHandle,
     target: e.target,
-    type: "smoothstep",
+    type: "removable",
     style: { stroke: "var(--color-primary)", strokeWidth: 1.75 },
   }));
 }
@@ -182,7 +185,10 @@ function FlowEditorInner({
         const filtered = connection.sourceHandle
           ? eds.filter((e) => !(e.source === connection.source && e.sourceHandle === connection.sourceHandle))
           : eds.filter((e) => !(e.source === connection.source && !e.sourceHandle));
-        const next = addEdge({ ...connection, type: "smoothstep", style: { stroke: "var(--color-primary)", strokeWidth: 1.75 } }, filtered);
+        const next = addEdge(
+          { ...connection, type: "removable", style: { stroke: "var(--color-primary)", strokeWidth: 1.75 } },
+          filtered
+        );
         setNodes((nds) => refreshConnected(nds, next));
         scheduleSave(nodes, next);
         return next;
@@ -366,6 +372,7 @@ function FlowEditorInner({
           onNodeClick={(_, n) => setSelectedNodeId(n.id)}
           onPaneClick={() => setSelectedNodeId(null)}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           onInit={() => fitView({ padding: 0.3 })}
           deleteKeyCode={["Backspace", "Delete"]}
           minZoom={0.2}
