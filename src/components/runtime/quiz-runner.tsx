@@ -10,7 +10,7 @@ import { recordAnalyticsEvent, submitPublicQuizResponse } from "@/lib/supabase/q
 import { triggerIntegrations } from "@/lib/integrations";
 import { getTrackingSettings, listTrackingEvents } from "@/lib/supabase/tracking-queries";
 import { fireTrackingEvent } from "@/lib/tracking-runtime";
-import { QuizTrackingEvent, QuizTrackingSettings } from "@/lib/types";
+import { QuizTrackingEvent, QuizTrackingSettings, QuizSessionAnswer } from "@/lib/types";
 import { Checkbox } from "@/components/ui/checkbox";
 import { SunAvatar } from "@/components/runtime/sun-avatar";
 
@@ -30,6 +30,25 @@ function timeLabel(ts: number) {
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
+}
+
+function titleForNode(node: QuizNode): string {
+  switch (node.data.kind) {
+    case "message":
+      return node.data.title || node.data.text || "הודעה";
+    case "question":
+      return node.data.title;
+    case "lead_details":
+      return "פרטי יצירת קשר";
+    case "end":
+      return "סיום";
+    default:
+      return "התחלה";
+  }
+}
+
+function totalStepsFor(quiz: Quiz): number {
+  return quiz.nodes.filter((n) => n.type === "question" || n.type === "lead_details").length;
 }
 
 type Entry =
@@ -80,6 +99,41 @@ export function QuizRunner({ quiz }: { quiz: Quiz }) {
     leadInfoRef.current = leadInfo;
   }, [leadInfo]);
 
+  // Live session tracking for the "מרכז שיחות" live view — reuses the same
+  // sessionIdRef as the Pixel/CAPI dedup above. Fire-and-forget, non-blocking.
+  const totalStepsRef = useRef(totalStepsFor(quiz));
+  function pushSessionUpdate(node: QuizNode, stepIndex: number, status: "active" | "completed", mergedAnswers: Record<string, LeadAnswer>, mergedScore: number) {
+    const lead = leadInfoRef.current;
+    const category = mergedScore >= 26 ? "hot" : mergedScore >= 16 ? "warm" : "cold";
+    const answersPayload: QuizSessionAnswer[] = Object.values(mergedAnswers).map((a) => ({
+      nodeId: a.nodeId,
+      questionTitle: a.questionTitle,
+      answerLabel: a.answerLabel,
+    }));
+    fetch("/api/quiz-sessions/track", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: sessionIdRef.current,
+        quizId: quiz.id,
+        stepIndex,
+        totalSteps: totalStepsRef.current,
+        currentNodeId: node.id,
+        currentNodeTitle: titleForNode(node),
+        status,
+        name: lead.name || undefined,
+        phone: lead.phone || undefined,
+        email: lead.email || undefined,
+        score: mergedScore,
+        category,
+        utmSource,
+        utmMedium: searchParams.get("utm_medium") ?? undefined,
+        utmCampaign: searchParams.get("utm_campaign") ?? undefined,
+        answers: answersPayload,
+      }),
+    }).catch(() => {});
+  }
+
   function fireEventsForTrigger(triggerKey: string | null, answerForScore?: LeadAnswer) {
     const tracking = trackingRef.current;
     if (!tracking) return;
@@ -111,6 +165,9 @@ export function QuizRunner({ quiz }: { quiz: Quiz }) {
         fireEventsForTrigger(null);
       }
     })();
+    if (firstNode && firstNode.type !== "end") {
+      pushSessionUpdate(firstNode, 0, "active", {}, 0);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -172,6 +229,7 @@ export function QuizRunner({ quiz }: { quiz: Quiz }) {
       } else {
         setActiveNodeId(next.id);
       }
+      pushSessionUpdate(next, Object.keys(mergedAnswers).length, next.type === "end" ? "completed" : "active", mergedAnswers, mergedScore);
       fireEventsForTrigger(next.id, answerForScore);
       if (next.type === "end") fireEventsForTrigger("__end__", answerForScore);
     }, 650);

@@ -1,109 +1,60 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { getWorkspaceId } from "@/lib/supabase/queries";
 import {
-  getInboxSettings,
-  listConversations,
-  listMessages,
-  listQuickReplies,
-  markConversationRead,
-  seedDefaultQuickReplies,
-  sendMessage,
-  setInboxDemoLive,
-  subscribeToConversations,
-  subscribeToMessages,
-} from "@/lib/supabase/inbox-queries";
-import { startDemoSimulator } from "@/lib/inbox-demo";
-import { Conversation, ConversationMessage, QuickReply } from "@/lib/types";
-import { ConversationList } from "@/components/inbox/conversation-list";
-import { ConversationThread } from "@/components/inbox/conversation-thread";
-import { CustomerPanel } from "@/components/inbox/customer-panel";
-import { toast } from "sonner";
+  deleteDemoSessions,
+  deleteSession,
+  getDemoLiveEnabled,
+  listLiveSessions,
+  setDemoLiveEnabled,
+  subscribeToSessions,
+} from "@/lib/supabase/live-sessions-queries";
+import { startDemoSimulator } from "@/lib/live-session-demo";
+import { QuizSession } from "@/lib/types";
+import { Switch } from "@/components/ui/switch";
+import { SessionList } from "@/components/live-sessions/session-list";
+import { SessionThread } from "@/components/live-sessions/session-thread";
+import { SessionDetails } from "@/components/live-sessions/session-details";
 
 export default function InboxPage() {
   const supabase = useMemo(() => createClient(), []);
-  const [loading, setLoading] = useState(true);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [currentUserName, setCurrentUserName] = useState<string>("");
-  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [sessions, setSessions] = useState<QuizSession[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ConversationMessage[]>([]);
-  const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
   const [demoLive, setDemoLive] = useState(false);
-
   const stopSimulatorRef = useRef<(() => void) | null>(null);
-  const selectedIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    selectedIdRef.current = selectedId;
-  }, [selectedId]);
-
-  const reloadConversations = useCallback(async () => {
-    if (!workspaceId) return;
-    const list = await listConversations(supabase, workspaceId);
-    setConversations(list);
-  }, [supabase, workspaceId]);
 
   useEffect(() => {
     (async () => {
       const wsId = await getWorkspaceId(supabase);
       setWorkspaceId(wsId);
-
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (user) {
-        setCurrentUserId(user.id);
-        setCurrentUserName((user.user_metadata?.full_name as string | undefined) || user.email || "נציג");
-      }
-
-      const [list, replies, settings] = await Promise.all([
-        listConversations(supabase, wsId),
-        listQuickReplies(supabase, wsId),
-        getInboxSettings(supabase, wsId),
-      ]);
-      setConversations(list);
-      setQuickReplies(replies);
-      if (replies.length === 0) {
-        await seedDefaultQuickReplies(supabase, wsId);
-        setQuickReplies(await listQuickReplies(supabase, wsId));
-      }
-      setDemoLive(settings.demoLiveEnabled);
-      setLoading(false);
+      const [list, demo] = await Promise.all([listLiveSessions(supabase, wsId), getDemoLiveEnabled(supabase, wsId)]);
+      setSessions(list);
+      setDemoLive(demo);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Realtime: conversations list (new/updated conversations) + new messages workspace-wide.
   useEffect(() => {
     if (!workspaceId) return;
-    const convChannel = subscribeToConversations(supabase, workspaceId, () => {
-      reloadConversations();
-    });
-    const msgChannel = subscribeToMessages(supabase, workspaceId, (msg) => {
-      if (msg.conversationId === selectedIdRef.current) {
-        setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
-        if (msg.senderType === "customer") markConversationRead(supabase, msg.conversationId);
-      }
-      if (msg.senderType === "customer") {
-        toast.message(`הודעה חדשה`, { description: msg.body?.slice(0, 80) });
-      }
-    });
+    async function reload() {
+      const list = await listLiveSessions(supabase, workspaceId!);
+      setSessions(list);
+    }
+    const channel = subscribeToSessions(supabase, workspaceId, reload);
     return () => {
-      supabase.removeChannel(convChannel);
-      supabase.removeChannel(msgChannel);
+      supabase.removeChannel(channel);
     };
-  }, [supabase, workspaceId, reloadConversations]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId]);
 
   useEffect(() => {
     if (!workspaceId) return;
     if (demoLive && !stopSimulatorRef.current) {
       stopSimulatorRef.current = startDemoSimulator(supabase, workspaceId);
-    }
-    if (!demoLive && stopSimulatorRef.current) {
+    } else if (!demoLive && stopSimulatorRef.current) {
       stopSimulatorRef.current();
       stopSimulatorRef.current = null;
     }
@@ -111,75 +62,43 @@ export default function InboxPage() {
       stopSimulatorRef.current?.();
       stopSimulatorRef.current = null;
     };
-  }, [demoLive, supabase, workspaceId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demoLive, workspaceId]);
 
-  async function handleToggleDemoLive(next: boolean) {
-    setDemoLive(next);
-    if (workspaceId) await setInboxDemoLive(supabase, workspaceId, next);
-  }
-
-  async function handleSelect(id: string) {
-    setSelectedId(id);
-    const msgs = await listMessages(supabase, id);
-    setMessages(msgs);
-    const conv = conversations.find((c) => c.id === id);
-    if (conv && conv.unreadCount > 0) {
-      await markConversationRead(supabase, id);
-      setConversations((cs) => cs.map((c) => (c.id === id ? { ...c, unreadCount: 0 } : c)));
+  async function handleToggleDemoLive(checked: boolean) {
+    if (!workspaceId) return;
+    setDemoLive(checked);
+    await setDemoLiveEnabled(supabase, workspaceId, checked);
+    if (!checked) {
+      await deleteDemoSessions(supabase, workspaceId);
+      const wasSelectedDemo = sessions.some((x) => x.id === selectedId && x.isDemo);
+      setSessions((s) => s.filter((x) => !x.isDemo));
+      if (wasSelectedDemo) setSelectedId(null);
     }
   }
 
-  async function handleSend(body: string, attachment?: { url: string; type: string; name: string }) {
-    if (!workspaceId || !selectedId || !currentUserId) return;
-    await sendMessage(supabase, workspaceId, selectedId, {
-      body: body || undefined,
-      senderType: "agent",
-      senderId: currentUserId,
-      attachmentUrl: attachment?.url,
-      attachmentType: attachment?.type,
-      attachmentName: attachment?.name,
-    });
-    const msgs = await listMessages(supabase, selectedId);
-    setMessages(msgs);
-    reloadConversations();
+  async function handleDelete(id: string) {
+    await deleteSession(supabase, id);
+    setSessions((s) => s.filter((x) => x.id !== id));
+    if (selectedId === id) setSelectedId(null);
   }
 
-  const selectedConversation = conversations.find((c) => c.id === selectedId) ?? null;
-
-  if (loading || !workspaceId || !currentUserId) {
-    return (
-      <div className="flex h-screen items-center justify-center text-muted-foreground">
-        <Loader2 className="size-5 animate-spin" />
-      </div>
-    );
-  }
+  const selected = sessions.find((s) => s.id === selectedId) ?? null;
 
   return (
-    <div className="flex h-screen">
-      <ConversationList
-        conversations={conversations}
-        selectedId={selectedId}
-        currentUserId={currentUserId}
-        currentUserName={currentUserName}
-        demoLive={demoLive}
-        onToggleDemoLive={handleToggleDemoLive}
-        onSelect={handleSelect}
-      />
-      <ConversationThread
-        conversation={selectedConversation}
-        messages={messages}
-        quickReplies={quickReplies}
-        workspaceId={workspaceId}
-        currentUserId={currentUserId}
-        currentUserName={currentUserName}
-        onSend={handleSend}
-        onConversationUpdated={reloadConversations}
-      />
-      <CustomerPanel
-        conversation={selectedConversation}
-        allConversations={conversations}
-        onConversationUpdated={reloadConversations}
-      />
+    <div className="flex h-screen flex-col">
+      <div className="flex items-center justify-between border-b bg-card px-5 py-3">
+        <h1 className="text-lg font-bold">מרכז שיחות</h1>
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-muted-foreground">Demo Live</span>
+          <Switch checked={demoLive} onCheckedChange={handleToggleDemoLive} />
+        </div>
+      </div>
+      <div className="flex flex-1 overflow-hidden">
+        <SessionList sessions={sessions} selectedId={selectedId} onSelect={setSelectedId} />
+        <SessionThread session={selected} />
+        <SessionDetails session={selected} onDelete={handleDelete} />
+      </div>
     </div>
   );
 }

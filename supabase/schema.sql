@@ -744,3 +744,63 @@ create policy "quiz_tracking_activity_owner_all" on public.quiz_tracking_activit
       where q.id = quiz_tracking_activity.quiz_id and w.owner_id = auth.uid()
     )
   );
+
+-- ============================================================
+-- 9. Live quiz sessions (in-progress + finished, for the מרכז שיחות
+--    live-tracking view: who's on which question right now, who dropped
+--    off, who completed). Writes only happen through a server route using
+--    the admin client, so this table has zero anon-facing policies.
+-- ============================================================
+
+create table if not exists public.quiz_sessions (
+  id text primary key,
+  quiz_id uuid not null references public.quizzes(id) on delete cascade,
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  quiz_name text not null default '',
+  step_index integer not null default 0,
+  total_steps integer not null default 0,
+  current_node_id text,
+  current_node_title text,
+  status text not null default 'active' check (status in ('active', 'completed')),
+  name text,
+  phone text,
+  email text,
+  score integer not null default 0,
+  category text,
+  utm_source text,
+  utm_medium text,
+  utm_campaign text,
+  answers jsonb not null default '[]'::jsonb,
+  is_demo boolean not null default false,
+  started_at timestamptz not null default now(),
+  last_event_at timestamptz not null default now(),
+  completed_at timestamptz
+);
+
+create index if not exists quiz_sessions_workspace_id_idx on public.quiz_sessions(workspace_id);
+create index if not exists quiz_sessions_last_event_at_idx on public.quiz_sessions(last_event_at desc);
+
+alter table public.quiz_sessions enable row level security;
+
+-- owner has full CRUD on their own workspace's sessions (read the live
+-- list, delete demo data, and write demo-simulated sessions directly from
+-- the dashboard). Real visitor sessions are written by the untrusted
+-- public runtime through /api/quiz-sessions/track using the admin client,
+-- which bypasses RLS entirely — there is intentionally no anon policy here.
+drop policy if exists "quiz_sessions_owner_all" on public.quiz_sessions;
+create policy "quiz_sessions_owner_all" on public.quiz_sessions
+  for all using (
+    exists (select 1 from public.workspaces w where w.id = quiz_sessions.workspace_id and w.owner_id = auth.uid())
+  ) with check (
+    exists (select 1 from public.workspaces w where w.id = quiz_sessions.workspace_id and w.owner_id = auth.uid())
+  );
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'quiz_sessions'
+  ) then
+    alter publication supabase_realtime add table public.quiz_sessions;
+  end if;
+end $$;

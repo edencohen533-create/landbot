@@ -278,73 +278,50 @@ export interface AnalyticsPoint {
   leads: number;
 }
 
-// ---------------- Inbox (מרכז שיחות) ----------------
+// ---------------- Live sessions (מרכז שיחות) ----------------
+// Live tracking of quiz-taking sessions: who's on which question right
+// now, who progressed, who dropped off, who completed.
 
-export type ConversationChannel = "whatsapp" | "webchat" | "email" | "instagram" | "messenger";
-export type ConversationStatus = "open" | "pending" | "snoozed" | "closed";
-export type MessageSenderType = "customer" | "agent" | "system";
-export type MessageStatus = "sent" | "delivered" | "read";
+export type QuizSessionStatus = "active" | "completed";
+// derived, not stored: "active" with a recent last_event_at is "live",
+// "active" with a stale one is "abandoned".
+export type QuizSessionDisplayStatus = "live" | "abandoned" | "completed";
 
-export const CONVERSATION_STATUS_LABELS: Record<ConversationStatus, string> = {
-  open: "פתוחה",
-  pending: "ממתינה לתשובה",
-  snoozed: "מושהית",
-  closed: "נסגרה",
+export const SESSION_STATUS_LABELS: Record<QuizSessionDisplayStatus, string> = {
+  live: "פעיל עכשיו",
+  abandoned: "ננטש",
+  completed: "הושלם",
 };
 
-export const CHANNEL_LABELS: Record<ConversationChannel, string> = {
-  whatsapp: "WhatsApp",
-  webchat: "צ'אט אתר",
-  email: "אימייל",
-  instagram: "Instagram",
-  messenger: "Messenger",
-};
+export interface QuizSessionAnswer {
+  nodeId: string;
+  questionTitle: string;
+  answerLabel: string;
+}
 
-export interface Conversation {
+export interface QuizSession {
   id: string;
+  quizId: string;
   workspaceId: string;
-  customerName: string;
-  customerPhone?: string;
-  customerEmail?: string;
-  customerAvatarUrl?: string;
-  channel: ConversationChannel;
-  status: ConversationStatus;
-  assignedTo?: string;
-  assignedToName?: string;
-  tags: string[];
-  unreadCount: number;
-  lastMessageAt: string;
-  lastMessagePreview?: string;
+  quizName: string;
+  stepIndex: number;
+  totalSteps: number;
+  currentNodeId?: string;
+  currentNodeTitle?: string;
+  status: QuizSessionStatus;
+  name?: string;
+  phone?: string;
+  email?: string;
+  score: number;
+  category?: string;
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
+  answers: QuizSessionAnswer[];
   isDemo: boolean;
-  createdAt: string;
-}
-
-export interface ConversationMessage {
-  id: string;
-  conversationId: string;
-  senderType: MessageSenderType;
-  senderId?: string;
-  body?: string;
-  attachmentUrl?: string;
-  attachmentType?: string;
-  attachmentName?: string;
-  status: MessageStatus;
-  isDemo: boolean;
-  createdAt: string;
-}
-
-export interface ConversationNote {
-  id: string;
-  conversationId: string;
-  text: string;
-  createdAt: string;
-}
-
-export interface QuickReply {
-  id: string;
-  workspaceId: string;
-  label: string;
-  body: string;
+  startedAt: string;
+  lastEventAt: string;
+  completedAt?: string;
 }
 
 // ---------------- Quiz tracking (Meta Pixel/CAPI + GTM) ----------------

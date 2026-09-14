@@ -8,6 +8,8 @@ import {
   QuizNodeData,
   QuizTheme,
   NodeType,
+  QuizSession,
+  QuizSessionAnswer,
 } from "@/lib/types";
 
 export interface QuizRow {
@@ -177,5 +179,57 @@ export function leadRowToLead(row: LeadRow, answers: LeadAnswer[], notes: LeadNo
     assignedTo: row.assigned_to ?? undefined,
     createdAt: row.created_at,
     statusHistory,
+  };
+}
+
+export interface QuizSessionRow {
+  id: string;
+  quiz_id: string;
+  workspace_id: string;
+  quiz_name: string;
+  step_index: number;
+  total_steps: number;
+  current_node_id: string | null;
+  current_node_title: string | null;
+  status: "active" | "completed";
+  name: string | null;
+  phone: string | null;
+  email: string | null;
+  score: number;
+  category: string | null;
+  utm_source: string | null;
+  utm_medium: string | null;
+  utm_campaign: string | null;
+  answers: QuizSessionAnswer[];
+  is_demo: boolean;
+  started_at: string;
+  last_event_at: string;
+  completed_at: string | null;
+}
+
+export function sessionRowToSession(row: QuizSessionRow): QuizSession {
+  return {
+    id: row.id,
+    quizId: row.quiz_id,
+    workspaceId: row.workspace_id,
+    quizName: row.quiz_name,
+    stepIndex: row.step_index,
+    totalSteps: row.total_steps,
+    currentNodeId: row.current_node_id ?? undefined,
+    currentNodeTitle: row.current_node_title ?? undefined,
+    status: row.status,
+    name: row.name ?? undefined,
+    phone: row.phone ?? undefined,
+    email: row.email ?? undefined,
+    score: row.score,
+    category: row.category ?? undefined,
+    utmSource: row.utm_source ?? undefined,
+    utmMedium: row.utm_medium ?? undefined,
+    utmCampaign: row.utm_campaign ?? undefined,
+    answers: row.answers ?? [],
+    isDemo: row.is_demo,
+    startedAt: row.started_at,
+    lastEventAt: row.last_event_at,
+    completedAt: row.completed_at ?? undefined,
   };
 }
